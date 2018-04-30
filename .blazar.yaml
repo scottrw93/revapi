@@ -2,7 +2,7 @@ enabled: true
 
 env:
   SET_VERSION_OVERRIDE: 1.0-$GIT_BRANCH-SNAPSHOT
-  MAVEN_ARGS: -am -pl revapi-standalone
+  MAVEN_ARGS: -am -pl revapi-java,revapi-reporter-text,revapi-java-spi,revapi-standalone
 
 buildpack:
   host: git.hubteam.com
