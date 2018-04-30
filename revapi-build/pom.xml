@@ -263,7 +263,8 @@
                 <groupId>com.mycila</groupId>
                 <artifactId>license-maven-plugin</artifactId>
                 <configuration>
-                    <header>license-template.ftl</header>
+                  <skip>true</skip>
+                  <header>license-template.ftl</header>
                     <excludes>
                         <exclude>**/README</exclude>
                         <exclude>**/README.*</exclude>
