@@ -61,7 +61,7 @@
         <version.org.junit>5.7.0</version.org.junit>
         <version.org.mockito>3.2.4</version.org.mockito>
         <version.org.slf4j>1.7.5</version.org.slf4j>
-        <version.revapi-build-support>9-SNAPSHOT</version.revapi-build-support>
+        <version.revapi-build-support>${project.version}</version.revapi-build-support>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -186,46 +186,6 @@
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
-            <plugin>
-                <groupId>com.mycila</groupId>
-                <artifactId>license-maven-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <phase>generate-sources</phase>
-                        <goals>
-                            <goal>format</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <dependencies>
-                    <dependency>
-                        <groupId>com.mycila</groupId>
-                        <artifactId>license-maven-plugin-git</artifactId>
-                        <version>3.0</version>
-                    </dependency>
-                    <dependency>
-                        <groupId>org.revapi</groupId>
-                        <artifactId>revapi-build-support</artifactId>
-                        <version>${version.revapi-build-support}</version>
-                    </dependency>
-                </dependencies>
-                <configuration>
-                    <skip>true</skip>
-                    <header>license-template.ftl</header>
-                    <excludes>
-                        <exclude>**/README</exclude>
-                        <exclude>**/README.*</exclude>
-                        <exclude>LICENSE</exclude>
-                        <exclude>**/*.adoc</exclude>
-                    </excludes>
-                    <mapping>
-                        <css>SLASHSTAR_STYLE</css>
-                        <java>SLASHSTAR_STYLE</java>
-                        <groovy>SLASHSTAR_STYLE</groovy>
-                        <atom>XML_STYLE</atom>
-                    </mapping>
-                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
