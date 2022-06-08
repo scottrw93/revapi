@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,42 +19,27 @@ package org.revapi.basic;
 import static org.revapi.basic.Util.getAnalysisContextFromFullConfig;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 
 import org.junit.Assert;
 import org.junit.Test;
-import org.revapi.API;
 import org.revapi.AnalysisContext;
-import org.revapi.Archive;
 import org.revapi.Difference;
-import org.revapi.Element;
-import org.revapi.simple.SimpleElement;
+import org.revapi.base.BaseElement;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public class IgnoreDifferenceTransformTest {
 
-    private static class DummyElement extends SimpleElement {
+    private static class DummyElement extends BaseElement<DummyElement> {
 
         private final String name;
 
         public DummyElement(String name) {
+            super(null, null);
             this.name = name;
-        }
-
-        @Nonnull
-        @Override
-        @SuppressWarnings("ConstantConditions")
-        public API getApi() {
-            return null;
-        }
-
-        @Nullable
-        @Override
-        public Archive getArchive() {
-            return null;
         }
 
         @Nonnull
@@ -64,12 +49,8 @@ public class IgnoreDifferenceTransformTest {
         }
 
         @Override
-        public int compareTo(@Nonnull Element o) {
-            if (!(o instanceof DummyElement)) {
-                return -1;
-            }
-
-            return name.compareTo(((DummyElement) o).name);
+        public int compareTo(@Nonnull DummyElement o) {
+            return name.compareTo(o.name);
         }
     }
 
@@ -86,7 +67,7 @@ public class IgnoreDifferenceTransformTest {
                     "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\":\"c\", \"justification\" : \"because\"}]}]");
 
             t.initialize(config);
-            difference = t.transform(oldE, newE, difference);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
             Assert.assertNull(difference);
         }
     }
@@ -103,7 +84,7 @@ public class IgnoreDifferenceTransformTest {
                     "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\":\"c\", \"justification\" : \"because\"}]}]");
 
             t.initialize(config);
-            difference = t.transform(oldE, newE, difference);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
             Assert.assertNull(difference);
         }
     }
@@ -123,13 +104,13 @@ public class IgnoreDifferenceTransformTest {
                     "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\":\"c\", \"kachna\": \"dobra\", \"justification\" : \"because\"}]}]");
 
             t.initialize(config);
-            difference = t.transform(oldE, newE, difference);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
             Assert.assertNotNull(difference);
 
-            anotherDiff = t.transform(oldE, newE, anotherDiff);
+            anotherDiff = Util.transformAndAssumeOne(t, oldE, newE, anotherDiff);
             Assert.assertNotNull(anotherDiff);
 
-            matchingDiff = t.transform(oldE, newE, matchingDiff);
+            matchingDiff = Util.transformAndAssumeOne(t, oldE, newE, matchingDiff);
             Assert.assertNull(matchingDiff);
         }
     }
@@ -148,13 +129,199 @@ public class IgnoreDifferenceTransformTest {
                     "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\":\".*\", \"kachna\": \".*dobra$\", \"justification\" : \"because\"}]}]");
 
             t.initialize(config);
-            difference = t.transform(oldE, newE, difference);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
             Assert.assertNull(difference);
 
-            anotherDiff = t.transform(oldE, newE, anotherDiff);
+            anotherDiff = Util.transformAndAssumeOne(t, oldE, newE, anotherDiff);
             Assert.assertNotNull(anotherDiff);
         }
     }
 
-    //TODO add tests for old and new element matching
+    @Test
+    public void testSimpleMatchHandlesNullOldElement() throws Exception {
+        DummyElement newE = new DummyElement("b");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\": \"c\", \"old\":\"a\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, null, newE, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testSimpleMatchHandlesNullNewElement() throws Exception {
+        DummyElement oldE = new DummyElement("a");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\": \"c\", \"new\":\"b\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, oldE, null, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testRegexMatchHandlesNullOldElement() throws Exception {
+        DummyElement newE = new DummyElement("b");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\": \"c\", \"old\":\"a\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, null, newE, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testRegexMatchHandlesNullNewElement() throws Exception {
+        DummyElement oldE = new DummyElement("a");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\": \"c\", \"new\":\"b\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, oldE, null, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testSimpleMatchOnOldElement() throws Exception {
+        DummyElement oldE = new DummyElement("a");
+        DummyElement newE = new DummyElement("b");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\":\"c\", \"old\": \"a\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertNull(difference);
+        }
+
+        difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\":\"c\", \"old\": \"x\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testSimpleMatchOnNewElement() throws Exception {
+        DummyElement oldE = new DummyElement("a");
+        DummyElement newE = new DummyElement("b");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\":\"c\", \"new\": \"b\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertNull(difference);
+        }
+
+        difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"code\":\"c\", \"new\": \"x\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testRegexMatchOnOldElement() throws Exception {
+        DummyElement oldE = new DummyElement("a");
+        DummyElement newE = new DummyElement("b");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\":\"c\", \"old\": \"[aA]\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertNull(difference);
+        }
+
+        difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\":\"c\", \"old\": \"x\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
+
+    @Test
+    public void testRegexMatchOnNewElement() throws Exception {
+        DummyElement oldE = new DummyElement("a");
+        DummyElement newE = new DummyElement("b");
+
+        Difference difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\":\"c\", \"new\": \"[bB]\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            difference = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertNull(difference);
+        }
+
+        difference = Difference.builder().withCode("c").build();
+
+        try (IgnoreDifferenceTransform t = new IgnoreDifferenceTransform()) {
+
+            AnalysisContext config = getAnalysisContextFromFullConfig(IgnoreDifferenceTransform.class,
+                    "[{\"extension\": \"revapi.ignore\", \"configuration\": [{\"regex\": true, \"code\":\"c\", \"new\": \"x\", \"justification\" : \"because\"}]}]");
+
+            t.initialize(config);
+            Difference transformed = Util.transformAndAssumeOne(t, oldE, newE, difference);
+            Assert.assertSame(difference, transformed);
+        }
+    }
 }

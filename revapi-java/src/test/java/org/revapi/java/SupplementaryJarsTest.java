@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,10 +30,10 @@ import org.revapi.AnalysisResult;
 import org.revapi.Report;
 import org.revapi.Revapi;
 import org.revapi.java.spi.Code;
-import org.revapi.java.spi.JavaModelElement;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
@@ -48,15 +48,15 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
 
     @Before
     public void compile() throws Exception {
-        //compile all the classes we need in 1 go
+        // compile all the classes we need in 1 go
         compRes1 = createCompiledJar("tmp1", "v1/supplementary/a/A.java", "v1/supplementary/b/B.java",
                 "v1/supplementary/a/C.java");
 
-        //now, create 2 jars out of them. Class A will be our "api" jar and the rest of the classes will form the
-        //supplementary jar that needs to be present as a runtime dep of the API but isn't itself considered an API of
-        //of its own.
-        //We then check that types from such supplementary jar that the API jar "leaks" by exposing them as types
-        //in public/protected fields/methods/method params are then considered the part of the API during api checks.
+        // now, create 2 jars out of them. Class A will be our "api" jar and the rest of the classes will form the
+        // supplementary jar that needs to be present as a runtime dep of the API but isn't itself considered an API of
+        // of its own.
+        // We then check that types from such supplementary jar that the API jar "leaks" by exposing them as types
+        // in public/protected fields/methods/method params are then considered the part of the API during api checks.
 
         apiV1 = ShrinkWrap.create(JavaArchive.class, "apiV1.jar")
                 .addAsResource(compRes1.compilationPath.resolve("A.class").toFile(), "A.class")
@@ -71,7 +71,7 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
                         "B$UsedByIgnoredClass.class")
                 .addAsResource(compRes1.compilationPath.resolve("A$PrivateEnum.class").toFile(), "A$PrivateEnum.class");
 
-        //now do the same for v2
+        // now do the same for v2
         compRes2 = createCompiledJar("tmp2", "v2/supplementary/a/A.java", "v2/supplementary/b/B.java",
                 "v2/supplementary/a/C.java");
 
@@ -117,46 +117,22 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
             allReports = res.getExtensions().getFirstExtension(CollectingReporter.class, null).getReports();
         }
 
-        Assert.assertEquals(8 + 11, allReports.size()); //11 removed methods when kind of class changes to interface
+        Assert.assertEquals(8, allReports.size());
         Assert.assertTrue(
                 containsDifference(allReports, null, "class B.T$1.Private", Code.CLASS_NON_PUBLIC_PART_OF_API.code()));
         Assert.assertTrue(containsDifference(allReports, null, "field B.T$2.f2", Code.FIELD_ADDED.code()));
         Assert.assertTrue(containsDifference(allReports, null, "field A.f3", Code.FIELD_ADDED.code()));
         Assert.assertTrue(containsDifference(allReports, "class B.T$2", "class B.T$2", Code.CLASS_NOW_FINAL.code()));
-        Assert.assertTrue(containsDifference(allReports, null, "class B.T$3", Code.CLASS_EXTERNAL_CLASS_EXPOSED_IN_API.code()));
+        Assert.assertTrue(
+                containsDifference(allReports, null, "class B.T$3", Code.CLASS_EXTERNAL_CLASS_EXPOSED_IN_API.code()));
         Assert.assertTrue(containsDifference(allReports, null, "class B.PrivateUsedClass",
                 Code.CLASS_NON_PUBLIC_PART_OF_API.code()));
         Assert.assertTrue(containsDifference(allReports, "class B.UsedByIgnoredClass", "interface B.UsedByIgnoredClass",
                 Code.CLASS_KIND_CHANGED.code()));
+        Assert.assertTrue(containsDifference(allReports, "class B.UsedByIgnoredClass", "interface B.UsedByIgnoredClass",
+                Code.CLASS_NOW_ABSTRACT.code()));
         Assert.assertTrue(containsDifference(allReports, "method void B.UsedByIgnoredClass::<init>()", null,
                 Code.METHOD_REMOVED.code()));
-        //eleven methods removed when kind changed, because interface doesn't have the methods of Object
-        Assert.assertEquals(11, allReports.stream()
-                .filter(r -> {
-                    javax.lang.model.element.TypeElement oldType = null;
-                    if (r.getOldElement() == null || !(r.getOldElement() instanceof JavaModelElement)) {
-                        return false;
-                    }
-
-                    javax.lang.model.element.Element old = ((JavaModelElement) r.getOldElement()).getDeclaringElement();
-
-                    do {
-                        if (old instanceof javax.lang.model.element.TypeElement) {
-                            oldType = (javax.lang.model.element.TypeElement) old;
-                            break;
-                        }
-                        old = old.getEnclosingElement();
-                    } while (old != null);
-
-                    if (oldType == null) {
-                        return false;
-                    }
-
-                    return oldType.getQualifiedName().contentEquals("java.lang.Object");
-
-                })
-                .flatMap(r -> r.getDifferences().stream())
-                .count());
     }
 
     @Test
@@ -167,12 +143,13 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
         AnalysisContext ctx = AnalysisContext.builder(revapi)
                 .withOldAPI(API.of(new ShrinkwrapArchive(apiV1)).supportedBy(new ShrinkwrapArchive(supV1)).build())
                 .withNewAPI(API.of(new ShrinkwrapArchive(apiV2)).supportedBy(new ShrinkwrapArchive(supV2)).build())
-                .withConfigurationFromJSON("{\"revapi\": {\"java\": {" +
-                        "\"filter\": {\"classes\": {\"exclude\": [\"C\"]}}}}}").build();
+                .withConfigurationFromJSON("{\"revapi\": {\"filter\": {"
+                        + "\"elements\": {\"exclude\": [{\"matcher\": \"java\", \"match\": \"class C {}\"}]}}}}")
+                .build();
 
         try (AnalysisResult res = revapi.analyze(ctx)) {
-            allReports =
-                    res.getExtensions().getFirstExtension(CollectingReporter.class, null).getReports();
+            res.throwIfFailed();
+            allReports = res.getExtensions().getFirstExtension(CollectingReporter.class, null).getReports();
         }
 
         Assert.assertEquals(6, allReports.size());
@@ -181,7 +158,8 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
         Assert.assertTrue(containsDifference(allReports, null, "field B.T$2.f2", Code.FIELD_ADDED.code()));
         Assert.assertTrue(containsDifference(allReports, null, "field A.f3", Code.FIELD_ADDED.code()));
         Assert.assertTrue(containsDifference(allReports, "class B.T$2", "class B.T$2", Code.CLASS_NOW_FINAL.code()));
-        Assert.assertTrue(containsDifference(allReports, null, "class B.T$3", Code.CLASS_EXTERNAL_CLASS_EXPOSED_IN_API.code()));
+        Assert.assertTrue(
+                containsDifference(allReports, null, "class B.T$3", Code.CLASS_EXTERNAL_CLASS_EXPOSED_IN_API.code()));
         Assert.assertTrue(containsDifference(allReports, null, "class B.PrivateUsedClass",
                 Code.CLASS_NON_PUBLIC_PART_OF_API.code()));
         Assert.assertFalse(containsDifference(allReports, "class B.UsedByIgnoredClass", "class B.UsedByIgnoredClass",
@@ -199,12 +177,13 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
         AnalysisContext ctx = AnalysisContext.builder(revapi)
                 .withOldAPI(API.of(new ShrinkwrapArchive(apiV1)).supportedBy(new ShrinkwrapArchive(supV1)).build())
                 .withNewAPI(API.of(new ShrinkwrapArchive(apiV2)).supportedBy(new ShrinkwrapArchive(supV2)).build())
-                .withConfigurationFromJSON("{\"revapi\": {\"java\": {" +
-                        "\"filter\": {\"classes\": {\"exclude\": [\"C\", \"B.T$2\"]}}}}}").build();
+                .withConfigurationFromJSON("{\"revapi\": {"
+                        + "\"filter\": {\"elements\": {\"exclude\": [{\"matcher\": \"java\", \"match\": \"match %c | %b; class %c=C {} class %b=B.T$2 {}\"}]}}}}")
+                .build();
 
         try (AnalysisResult res = revapi.analyze(ctx)) {
-            allReports =
-                    res.getExtensions().getFirstExtension(CollectingReporter.class, null).getReports();
+            res.throwIfFailed();
+            allReports = res.getExtensions().getFirstExtension(CollectingReporter.class, null).getReports();
         }
 
         Assert.assertEquals(3, allReports.size());
@@ -213,7 +192,8 @@ public class SupplementaryJarsTest extends AbstractJavaElementAnalyzerTest {
         Assert.assertFalse(containsDifference(allReports, null, "field B.T$2.f2", Code.FIELD_ADDED.code()));
         Assert.assertTrue(containsDifference(allReports, null, "field A.f3", Code.FIELD_ADDED.code()));
         Assert.assertFalse(containsDifference(allReports, "class B.T$2", "class B.T$2", Code.CLASS_NOW_FINAL.code()));
-        Assert.assertTrue(containsDifference(allReports, null, "class B.T$3", Code.CLASS_EXTERNAL_CLASS_EXPOSED_IN_API.code()));
+        Assert.assertTrue(
+                containsDifference(allReports, null, "class B.T$3", Code.CLASS_EXTERNAL_CLASS_EXPOSED_IN_API.code()));
         Assert.assertTrue(containsDifference(allReports, null, "class B.PrivateUsedClass",
                 Code.CLASS_NON_PUBLIC_PART_OF_API.code()));
         Assert.assertFalse(containsDifference(allReports, "class B.UsedByIgnoredClass", "class B.UsedByIgnoredClass",

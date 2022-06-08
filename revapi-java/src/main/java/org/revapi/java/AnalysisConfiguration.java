@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,57 +21,85 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
-import org.jboss.dmr.ModelNode;
+import javax.annotation.Nullable;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import org.revapi.TreeFilter;
+import org.revapi.java.filters.ClassFilter;
+import org.revapi.java.filters.PackageFilter;
+import org.revapi.java.spi.JavaElement;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class AnalysisConfiguration {
 
+    private static final Logger LOG = LoggerFactory.getLogger(AnalysisConfiguration.class);
+
     private final MissingClassReporting missingClassReporting;
     private final Set<String> useReportingCodes;
     private final boolean ignoreMissingAnnotations;
-    private final Set<Pattern> classInclusionFilters;
-    private final Set<Pattern> classExclusionFilters;
-    private final Set<Pattern> packageInclusionFilters;
-    private final Set<Pattern> packageExclusionFilters;
+    private final boolean matchOverloads;
+    private final TreeFilter<JavaElement> filter;
 
-    public AnalysisConfiguration(MissingClassReporting missingClassReporting, Set<String> useReportingCodes,
-                                 boolean ignoreMissingAnnotations,
-                                 Set<Pattern> classInclusionFilters,
-                                 Set<Pattern> classExclusionFilters,
-                                 Set<Pattern> packageInclusionFilters, Set<Pattern> packageExclusionFilters) {
+    AnalysisConfiguration(MissingClassReporting missingClassReporting, Set<String> useReportingCodes,
+            boolean ignoreMissingAnnotations, boolean matchOverloads, @Nullable TreeFilter<JavaElement> filter) {
         this.missingClassReporting = missingClassReporting;
         this.useReportingCodes = useReportingCodes;
         this.ignoreMissingAnnotations = ignoreMissingAnnotations;
-        this.classInclusionFilters = classInclusionFilters;
-        this.classExclusionFilters = classExclusionFilters;
-        this.packageInclusionFilters = packageInclusionFilters;
-        this.packageExclusionFilters = packageExclusionFilters;
+        this.matchOverloads = matchOverloads;
+        this.filter = filter;
     }
 
-    public static AnalysisConfiguration fromModel(ModelNode node) {
+    public static AnalysisConfiguration fromModel(JsonNode node) {
         MissingClassReporting reporting = readMissingClassReporting(node);
         Set<String> useReportingCodes = readUseReportingCodes(node);
         boolean ignoreMissingAnnotations = readIgnoreMissingAnnotations(node);
+        boolean matchOverloads = readMatchOverloads(node);
 
-        ModelNode classesRegex = node.get("filter", "classes", "regex");
-        ModelNode packagesRegex = node.get("filter", "packages", "regex");
+        JsonNode classesRegex = node.path("filter").path("classes").path("regex");
+        JsonNode packagesRegex = node.path("filter").path("packages").path("regex");
 
-        Set<Pattern> classInclusionFilters = readFilter(node.get("filter", "classes", "include"),
+        Set<Pattern> classInclusionFilters = readFilter(node.path("filter").path("classes").path("include"),
                 classesRegex);
-        Set<Pattern> classExclusionFilters = readFilter(node.get("filter", "classes", "exclude"),
+        Set<Pattern> classExclusionFilters = readFilter(node.path("filter").path("classes").path("exclude"),
                 classesRegex);
-        Set<Pattern> packageInclusionFilters = readFilter(node.get("filter", "packages", "include"),
+        Set<Pattern> packageInclusionFilters = readFilter(node.path("filter").path("packages").path("include"),
                 packagesRegex);
-        Set<Pattern> packageExclusionFilters = readFilter(node.get("filter", "packages", "exclude"),
+        Set<Pattern> packageExclusionFilters = readFilter(node.path("filter").path("packages").path("exclude"),
                 packagesRegex);
 
-        return new AnalysisConfiguration(reporting, useReportingCodes,
-                ignoreMissingAnnotations, classInclusionFilters,
-                classExclusionFilters, packageInclusionFilters, packageExclusionFilters);
+        TreeFilter<JavaElement> includeFilter = null;
+
+        if (!(classInclusionFilters.isEmpty() && classExclusionFilters.isEmpty() && packageInclusionFilters.isEmpty()
+                && packageExclusionFilters.isEmpty())) {
+            LOG.warn("Filtering using the revapi.java.filter.(classes|packages) has been deprecated in favor of"
+                    + " revapi.filter in combination with the java matcher.");
+
+            if (!classInclusionFilters.isEmpty() || !classExclusionFilters.isEmpty()) {
+                includeFilter = new ClassFilter(classInclusionFilters.toArray(new Pattern[0]),
+                        classExclusionFilters.toArray(new Pattern[0]));
+            }
+
+            if (!packageInclusionFilters.isEmpty() || !packageExclusionFilters.isEmpty()) {
+                PackageFilter pkgFilter = new PackageFilter(packageInclusionFilters.toArray(new Pattern[0]),
+                        packageExclusionFilters.toArray(new Pattern[0]));
+                if (includeFilter == null) {
+                    includeFilter = pkgFilter;
+                } else {
+                    includeFilter = TreeFilter.intersection(includeFilter, pkgFilter);
+                }
+            }
+        }
+
+        return new AnalysisConfiguration(reporting, useReportingCodes, ignoreMissingAnnotations, matchOverloads,
+                includeFilter);
     }
 
     public MissingClassReporting getMissingClassReporting() {
@@ -90,26 +118,23 @@ public final class AnalysisConfiguration {
         return ignoreMissingAnnotations;
     }
 
-    public Set<Pattern> getClassExclusionFilters() {
-        return classExclusionFilters;
+    public boolean isMatchOverloads() {
+        return matchOverloads;
     }
 
-    public Set<Pattern> getClassInclusionFilters() {
-        return classInclusionFilters;
+    /**
+     * @deprecated only supports the obsolete package and class name filtering before we can remove it.
+     */
+    @Deprecated
+    @Nullable
+    public TreeFilter<JavaElement> getPackageClassFilter() {
+        return filter;
     }
 
-    public Set<Pattern> getPackageExclusionFilters() {
-        return packageExclusionFilters;
-    }
-
-    public Set<Pattern> getPackageInclusionFilters() {
-        return packageInclusionFilters;
-    }
-
-    private static MissingClassReporting readMissingClassReporting(ModelNode analysisConfig) {
-        ModelNode config = analysisConfig.get("missing-classes", "behavior");
-        if (config.isDefined()) {
-            switch (config.asString()) {
+    private static MissingClassReporting readMissingClassReporting(JsonNode analysisConfig) {
+        JsonNode config = analysisConfig.path("missing-classes").path("behavior");
+        if (config.isTextual()) {
+            switch (config.asText()) {
             case "report":
                 return MissingClassReporting.REPORT;
             case "ignore":
@@ -117,39 +142,32 @@ public final class AnalysisConfiguration {
             case "error":
                 return MissingClassReporting.ERROR;
             default:
-                throw new IllegalArgumentException("Unsupported value of revapi.java.missing-classes.behavior: '" +
-                        config.asString() + "'. Only 'report', 'ignore' and 'error' are recognized.");
+                throw new IllegalArgumentException("Unsupported value of revapi.java.missing-classes.behavior: '"
+                        + config.asText() + "'. Only 'report', 'ignore' and 'error' are recognized.");
             }
         }
 
         return MissingClassReporting.REPORT;
     }
 
-    private static boolean readIgnoreMissingAnnotations(ModelNode analysisConfig) {
-        ModelNode config = analysisConfig.get("missing-classes", "ignoreMissingAnnotations");
-        if (config.isDefined()) {
-            return config.asBoolean();
-        }
-
-        return false;
+    private static boolean readIgnoreMissingAnnotations(JsonNode analysisConfig) {
+        JsonNode config = analysisConfig.path("missing-classes").path("ignoreMissingAnnotations");
+        return config.asBoolean(false);
     }
 
-    private static Set<String> readUseReportingCodes(ModelNode analysisConfig) {
+    private static boolean readMatchOverloads(JsonNode analysisConfig) {
+        return analysisConfig.path("matchOverloads").asBoolean(true);
+    }
+
+    private static @Nullable Set<String> readUseReportingCodes(JsonNode analysisConfig) {
         Set<String> ret = new HashSet<>(5);
-        ModelNode config = analysisConfig.get("reportUsesFor");
-        if (config.isDefined()) {
-            switch (config.getType()) {
-                case LIST:
-                    for (ModelNode code : config.asList()) {
-                        ret.add(code.asString());
-                    }
-                    break;
-                case STRING:
-                    if ("all-differences".equals(config.asString())) {
-                        ret = null;
-                    }
-                    break;
+        JsonNode config = analysisConfig.path("reportUsesFor");
+        if (config.isArray()) {
+            for (JsonNode code : config) {
+                ret.add(code.asText());
             }
+        } else if (config.isTextual() && "all-differences".equals(config.asText())) {
+            ret = null;
         } else {
             ret.add("java.missing.oldClass");
             ret.add("java.missing.newClass");
@@ -161,22 +179,20 @@ public final class AnalysisConfiguration {
         return ret;
     }
 
-    private static Set<Pattern> readFilter(ModelNode filterNode, ModelNode regexNode) {
-        if (!filterNode.isDefined()) {
+    private static Set<Pattern> readFilter(JsonNode filterNode, JsonNode regexNode) {
+        if (!filterNode.isArray()) {
             return Collections.emptySet();
         }
 
-        boolean isRegex = regexNode.isDefined() && regexNode.asBoolean();
+        boolean isRegex = regexNode.asBoolean(false);
 
-        return filterNode.asList().stream()
-                .map(filter -> {
-                    if (isRegex) {
-                        return Pattern.compile(filter.asString());
-                    } else {
-                        return Pattern.compile(Pattern.quote(filter.asString()));
-                    }
-                })
-                .collect(Collectors.toSet());
+        return StreamSupport.stream(filterNode.spliterator(), false).map(filter -> {
+            if (isRegex) {
+                return Pattern.compile(filter.asText());
+            } else {
+                return Pattern.compile(Pattern.quote(filter.asText()));
+            }
+        }).collect(Collectors.toSet());
     }
 
     public enum MissingClassReporting {

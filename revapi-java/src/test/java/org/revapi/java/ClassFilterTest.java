@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,84 +25,90 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
 
-import javax.annotation.Nullable;
-
 import org.junit.Assert;
 import org.junit.Test;
 import org.revapi.API;
 import org.revapi.AnalysisContext;
-import org.revapi.ArchiveAnalyzer;
+import org.revapi.AnalysisResult;
 import org.revapi.Element;
-import org.revapi.ElementForest;
 import org.revapi.PipelineConfiguration;
 import org.revapi.Revapi;
+import org.revapi.TreeFilter;
+import org.revapi.basic.ConfigurableElementFilter;
+import org.revapi.java.matcher.JavaElementMatcher;
+import org.revapi.java.model.JavaElementForest;
+import org.revapi.java.spi.JavaElement;
 import org.revapi.java.spi.JavaModelElement;
-import org.revapi.simple.SimpleElementFilter;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.7.0
  */
 public class ClassFilterTest extends AbstractJavaElementAnalyzerTest {
     @Test
-    public void testSimpleFilterByName_exclude() throws Exception {
-        testWith("{\"revapi\": {\"java\": {\"filter\": {\"classes\": {\"exclude\": [\"classfilter.A\"]}}}}}",
-                Stream.of(
-                        "class classfilter.B",
-                        "field classfilter.B.field",
-                        "method void classfilter.B::m()",
-                        "method void classfilter.B::<init>()",
-                        "class classfilter.B.BA",
-                        "method void classfilter.B.BA::<init>()",
-                        "class classfilter.B.BB",
+    public void testFilterByName_exclude() throws Exception {
+        testWith(
+                "{\"revapi\": {\"filter\": {\"elements\": {\"exclude\": [{\"matcher\": \"java\", \"match\": \"class classfilter.A {}\"}]}}}}",
+                Stream.of("class classfilter.B", "field classfilter.B.field", "method void classfilter.B::m()",
+                        "method void classfilter.B::<init>()", "class classfilter.B.BA",
+                        "method void classfilter.B.BA::<init>()", "class classfilter.B.BB",
                         "method void classfilter.B.BB::<init>()").collect(toSet()));
     }
 
     @Test
-    public void testSimpleFilterByName_include() throws Exception {
+    public void testDeprecatedFilterByName_exclude() throws Exception {
+        testWith("{\"revapi\": {\"java\": {\"filter\": {\"classes\": {\"exclude\": [\"classfilter.A\"]}}}}}",
+                Stream.of("class classfilter.B", "field classfilter.B.field", "method void classfilter.B::m()",
+                        "method void classfilter.B::<init>()", "class classfilter.B.BA",
+                        "method void classfilter.B.BA::<init>()", "class classfilter.B.BB",
+                        "method void classfilter.B.BB::<init>()").collect(toSet()));
+    }
+
+    @Test
+    public void testFilterByName_include() throws Exception {
+        testWith(
+                "{\"revapi\": {\"filter\": {\"elements\": {\"include\": [{\"matcher\": \"java\", \"match\": \"class classfilter.A {}\"}]}}}}",
+                Stream.of("class classfilter.A", "method void classfilter.A::m()",
+                        "method void classfilter.A::<init>()", "class classfilter.A.AA",
+                        "method void classfilter.A.AA::<init>()", "class classfilter.A.AA.AAA",
+                        "method void classfilter.A.AA.AAA::<init>()", "class classfilter.A.AB",
+                        "method void classfilter.A.AB::<init>()").collect(toSet()));
+    }
+
+    @Test
+    public void testDeprecatedFilterByName_include() throws Exception {
         testWith("{\"revapi\": {\"java\": {\"filter\": {\"classes\": {\"include\": [\"classfilter.A\"]}}}}}",
-                Stream.of(
-                        "class classfilter.A",
-                        "method void classfilter.A::m()",
-                        "method void classfilter.A::<init>()",
-                        "class classfilter.A.AA",
-                        "method void classfilter.A.AA::<init>()",
-                        "class classfilter.A.AA.AAA",
-                        "method void classfilter.A.AA.AAA::<init>()",
-                        "class classfilter.A.AB",
+                Stream.of("class classfilter.A", "method void classfilter.A::m()",
+                        "method void classfilter.A::<init>()", "class classfilter.A.AA",
+                        "method void classfilter.A.AA::<init>()", "class classfilter.A.AA.AAA",
+                        "method void classfilter.A.AA.AAA::<init>()", "class classfilter.A.AB",
                         "method void classfilter.A.AB::<init>()").collect(toSet()));
     }
 
     @Test
     public void testInnerClassExclusionOverride() throws Exception {
-        testWith("{\"revapi\": {\"java\": {\"filter\": {\"classes\": {\"exclude\": [\"classfilter.A\"]," +
-                " \"include\": [\"classfilter.A.AA.AAA\", \"classfilter.B\"]}}}}}",
-                Stream.of(
-                        "class classfilter.A.AA.AAA",
-                        "method void classfilter.A.AA.AAA::<init>()",
-                        "class classfilter.B",
-                        "field classfilter.B.field",
-                        "method void classfilter.B::m()",
-                        "method void classfilter.B::<init>()",
-                        "class classfilter.B.BA",
-                        "method void classfilter.B.BA::<init>()",
-                        "class classfilter.B.BB",
+        testWith(
+                "{\"revapi\": {\"filter\": {\"elements\": {\"exclude\": [{\"matcher\": \"java\", \"match\": \"class classfilter.A {}\"}],"
+                        + " \"include\": [{\"matcher\": \"java\", \"match\": \"match %a|%b; class %a=classfilter.A.AA.AAA {} class %b=classfilter.B {}\"}]}}}}",
+                Stream.of("class classfilter.A.AA.AAA", "method void classfilter.A.AA.AAA::<init>()",
+                        "class classfilter.B", "field classfilter.B.field", "method void classfilter.B::m()",
+                        "method void classfilter.B::<init>()", "class classfilter.B.BA",
+                        "method void classfilter.B.BA::<init>()", "class classfilter.B.BB",
                         "method void classfilter.B.BB::<init>()").collect(toSet()));
     }
 
     @Test
-    public void testRegexFilter() throws Exception {
-        testWith("{\"revapi\": {\"java\": {\"filter\": {\"classes\": {\"regex\": true," +
-                " \"exclude\": [\"classfilter\\.(A|B\\.BB)\"]}}}}}",
-                Stream.of(
-                        "class classfilter.B",
-                        "field classfilter.B.field",
-                        "method void classfilter.B::m()",
-                        "method void classfilter.B::<init>()",
-                        "class classfilter.B.BA",
-                        "method void classfilter.B.BA::<init>()").collect(toSet()));
+    public void testDeprecatedInnerClassExclusionOverride() throws Exception {
+        testWith(
+                "{\"revapi\": {\"java\": {\"filter\": {\"classes\": {\"exclude\": [\"classfilter.A\"],"
+                        + " \"include\": [\"classfilter.A.AA.AAA\", \"classfilter.B\"]}}}}}",
+                Stream.of("class classfilter.A.AA.AAA", "method void classfilter.A.AA.AAA::<init>()",
+                        "class classfilter.B", "field classfilter.B.field", "method void classfilter.B::m()",
+                        "method void classfilter.B::<init>()", "class classfilter.B.BA",
+                        "method void classfilter.B.BA::<init>()", "class classfilter.B.BB",
+                        "method void classfilter.B.BB::<init>()").collect(toSet()));
     }
-
 
     private void testWith(String configJSON, Set<String> expectedResults) throws Exception {
         ArchiveAndCompilationPath archive = createCompiledJar("test.jar", "classfilter/A.java", "classfilter/B.java");
@@ -113,39 +119,53 @@ public class ClassFilterTest extends AbstractJavaElementAnalyzerTest {
             throws Exception {
         try {
             JavaApiAnalyzer apiAnalyzer = new JavaApiAnalyzer(Collections.emptyList(), Collections.emptyList());
-            Revapi r = new Revapi(PipelineConfiguration.builder().withAnalyzers(JavaApiAnalyzer.class).build());
+            Revapi r = new Revapi(PipelineConfiguration.builder().withAnalyzers(JavaApiAnalyzer.class)
+                    .withFilters(ConfigurableElementFilter.class).withMatchers(JavaElementMatcher.class).build());
             AnalysisContext ctx = AnalysisContext.builder(r).withConfigurationFromJSON(configJSON).build();
-            AnalysisContext analyzerCtx = r.prepareAnalysis(ctx).getFirstConfigurationOrNull(JavaApiAnalyzer.class);
-            apiAnalyzer.initialize(analyzerCtx);
+            AnalysisResult.Extensions extensions = r.prepareAnalysis(ctx);
 
-            ArchiveAnalyzer archiveAnalyzer = apiAnalyzer.getArchiveAnalyzer(
+            AnalysisContext filterCtx = extensions.getFirstConfigurationOrNull(ConfigurableElementFilter.class);
+            AnalysisContext analyzerCtx = extensions.getFirstConfigurationOrNull(JavaApiAnalyzer.class);
+
+            ConfigurableElementFilter filter = new ConfigurableElementFilter();
+
+            Assert.assertNotNull(analyzerCtx);
+            Assert.assertNotNull(filterCtx);
+
+            apiAnalyzer.initialize(analyzerCtx);
+            filter.initialize(filterCtx);
+
+            JavaArchiveAnalyzer archiveAnalyzer = apiAnalyzer.getArchiveAnalyzer(
                     new API(Collections.singletonList(new ShrinkwrapArchive(archive.archive)), null));
 
-            ElementForest forest = archiveAnalyzer.analyze();
+            JavaElementForest forest = archiveAnalyzer
+                    .analyze(filter.filterFor(archiveAnalyzer).orElse(TreeFilter.matchAndDescend()));
+            archiveAnalyzer.prune(forest);
 
-            List<Element> results = forest.search(Element.class, true, new AcceptingFilter(), null);
+            List<JavaElement> results = forest.stream(JavaElement.class, true, null).collect(toList());
 
-            ((JavaArchiveAnalyzer) archiveAnalyzer).getCompilationValve().removeCompiledResults();
+            archiveAnalyzer.getCompilationValve().removeCompiledResults();
 
             List<String> expected = new ArrayList<>(expectedResults);
             List<String> actual = results.stream()
-                    //don't include inherited stuff and annotations. We don't work with inherited classes or annotations
-                    //here and we're actually not interested in seeing stuff from java.lang.Object in the tests, because
-                    //that is just unnecessarily verbose for the purpose of the tests we're doing here.
+                    // don't include inherited stuff and annotations. We don't work with inherited classes or
+                    // annotations
+                    // here and we're actually not interested in seeing stuff from java.lang.Object in the tests,
+                    // because
+                    // that is just unnecessarily verbose for the purpose of the tests we're doing here.
                     .filter(e -> {
                         if (e.getArchive() == null) {
                             return false;
                         }
 
                         if (!(e instanceof JavaModelElement)) {
-                            //exclude annotations
+                            // exclude annotations
                             return false;
                         }
 
                         JavaModelElement el = (JavaModelElement) e;
                         return !el.isInherited();
-                    })
-                    .map(Element::getFullHumanReadableString).collect(toList());
+                    }).map(Element::getFullHumanReadableString).collect(toList());
 
             Collections.sort(expected);
             Collections.sort(actual);
@@ -153,23 +173,6 @@ public class ClassFilterTest extends AbstractJavaElementAnalyzerTest {
             Assert.assertEquals(expected, actual);
         } finally {
             deleteDir(archive.compilationPath);
-        }
-    }
-
-    private static class AcceptingFilter extends SimpleElementFilter {
-        @Override
-        public boolean applies(@Nullable Element element) {
-            return true;
-        }
-
-        @Override
-        public boolean shouldDescendInto(@Nullable Object element) {
-            return true;
-        }
-
-        @Override
-        public String getExtensionId() {
-            return "accepting-filter";
         }
     }
 }

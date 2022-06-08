@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,8 @@ package org.revapi.maven;
 
 import static org.apache.maven.plugins.annotations.LifecyclePhase.PACKAGE;
 import static org.apache.maven.plugins.annotations.LifecyclePhase.SITE;
+import static org.revapi.maven.utils.ArtifactResolver.getRevapiDependencySelector;
+import static org.revapi.maven.utils.ArtifactResolver.getRevapiDependencyTraverser;
 
 import java.io.File;
 import java.text.MessageFormat;
@@ -50,8 +52,6 @@ import org.revapi.API;
 import org.revapi.AnalysisResult;
 import org.revapi.Revapi;
 import org.revapi.maven.utils.ArtifactResolver;
-import org.revapi.maven.utils.ScopeDependencySelector;
-import org.revapi.maven.utils.ScopeDependencyTraverser;
 
 /**
  * Uses the configuration supplied at the top level aggregator project to run analysis on all sub-projects.
@@ -64,6 +64,7 @@ import org.revapi.maven.utils.ScopeDependencyTraverser;
  * how to append to a report instead of overwriting it.
  *
  * @author Lukas Krejci
+ *
  * @since 0.5.0
  */
 @Mojo(name = "report-aggregate", aggregator = true, defaultPhase = SITE)
@@ -73,7 +74,8 @@ public class ReportAggregateMojo extends ReportMojo {
     @Component
     private MavenSession mavenSession;
 
-    @Override public String getOutputName() {
+    @Override
+    public String getOutputName() {
         return "revapi-aggregate-report";
     }
 
@@ -89,23 +91,26 @@ public class ReportAggregateMojo extends ReportMojo {
 
     @Override
     public void setReportOutputDirectory(File reportOutputDirectory) {
-        //this is called by the site plugin to set the output directory. We grandiously ignore what it wants and output
-        //in the top level project's site dir.
+        // this is called by the site plugin to set the output directory. We grandiously ignore what it wants and output
+        // in the top level project's site dir.
         super.setReportOutputDirectory(getReportOutputDirectory());
     }
 
-    @Override public String getDescription(Locale locale) {
+    @Override
+    public String getDescription(Locale locale) {
         return null;
     }
 
-    @Override public boolean canGenerateReport() {
-        //aggregate report makes sense only for POM
+    @Override
+    public boolean canGenerateReport() {
+        // aggregate report makes sense only for POM
         return "pom".equals(project.getArtifact().getArtifactHandler().getPackaging());
     }
 
     @Override
     protected void executeReport(Locale locale) throws MavenReportException {
         if (skip) {
+            getLog().info("Skipping execution");
             return;
         }
 
@@ -120,8 +125,8 @@ public class ReportAggregateMojo extends ReportMojo {
             return as.compareTo(bs);
         });
 
-        Map<MavenProject, ProjectVersions> projectVersions = dependents.stream().collect(
-                Collectors.toMap(Function.identity(), this::getRunConfig));
+        Map<MavenProject, ProjectVersions> projectVersions = dependents.stream()
+                .collect(Collectors.toMap(Function.identity(), this::getRunConfig));
         projectVersions.put(project, getRunConfig(project));
 
         ResourceBundle messages = getBundle(locale);
@@ -142,8 +147,8 @@ public class ReportAggregateMojo extends ReportMojo {
                     try (AnalysisResult res = projectAnalyzer.analyze()) {
                         res.throwIfFailed();
 
-                        ReportTimeReporter reporter =
-                                res.getExtensions().getFirstExtension(ReportTimeReporter.class, null);
+                        ReportTimeReporter reporter = res.getExtensions().getFirstExtension(ReportTimeReporter.class,
+                                null);
 
                         if (generateSiteReport && reporter != null) {
                             reportBody(reporter, projectAnalyzer.getResolvedOldApi(),
@@ -206,27 +211,22 @@ public class ReportAggregateMojo extends ReportMojo {
             if (!project.getArtifact().getArtifactHandler().isAddedToClasspath()) {
                 return ret;
             }
-            oldArtifacts = new String[]{defaultOldArtifact};
+            oldArtifacts = new String[] { defaultOldArtifact };
         }
         if (newArtifacts == null || newArtifacts.length == 0) {
             if (!project.getArtifact().getArtifactHandler().isAddedToClasspath()) {
                 return ret;
             }
-            newArtifacts = new String[]{defaultNewArtifact};
+            newArtifacts = new String[] { defaultNewArtifact };
         }
         String versionRegexString = getValueOfChild(pluginConfig, "versionFormat");
         Pattern versionRegex = versionRegexString == null ? null : Pattern.compile(versionRegexString);
 
-        String[] topLevelScopes = resolveProvidedDependencies
-                ? new String[] {"compile", "provided"}
-                : new String[] {"compile"};
-        String[] transitiveScopes = resolveTransitiveProvidedDependencies
-            ? new String[]{"compile", "provided"}
-            : new String[]{"compile"};
-
         DefaultRepositorySystemSession session = new DefaultRepositorySystemSession(repositorySystemSession);
-        session.setDependencySelector(new ScopeDependencySelector(topLevelScopes, transitiveScopes));
-        session.setDependencyTraverser(new ScopeDependencyTraverser(topLevelScopes, transitiveScopes));
+        session.setDependencySelector(
+                getRevapiDependencySelector(resolveProvidedDependencies, resolveTransitiveProvidedDependencies));
+        session.setDependencyTraverser(
+                getRevapiDependencyTraverser(resolveProvidedDependencies, resolveTransitiveProvidedDependencies));
 
         if (alwaysCheckForReleaseVersion) {
             session.setUpdatePolicy(RepositoryPolicy.UPDATE_POLICY_ALWAYS);
@@ -250,7 +250,8 @@ public class ReportAggregateMojo extends ReportMojo {
         return ret;
     }
 
-    private Analyzer prepareAnalyzer(Revapi revapi, MavenProject project, Locale locale, ProjectVersions storedVersions) {
+    private Analyzer prepareAnalyzer(Revapi revapi, MavenProject project, Locale locale,
+            ProjectVersions storedVersions) {
 
         Plugin runPluginConfig = findRevapi(project);
 
@@ -271,7 +272,7 @@ public class ReportAggregateMojo extends ReportMojo {
 
         AnalyzerBuilder bld = AnalyzerBuilder.forArtifacts(oldArtifacts, newArtifacts)
                 .withAlwaysCheckForReleasedVersion(this.alwaysCheckForReleaseVersion)
-                .withPipelineConfiguration(this.pipelineConfiguration)
+                .withPipelineConfiguration(PipelineConfigurationParser.parse(this.pipelineConfiguration))
                 .withAnalysisConfiguration(this.analysisConfiguration)
                 .withAnalysisConfigurationFiles(this.analysisConfigurationFiles)
                 .withCheckDependencies(this.checkDependencies)
@@ -280,14 +281,14 @@ public class ReportAggregateMojo extends ReportMojo {
                 .withDisallowedExtensions(disallowedExtensions)
                 .withFailOnMissingConfigurationFiles(this.failOnMissingConfigurationFiles)
                 .withFailOnUnresolvedArtifacts(this.failOnUnresolvedArtifacts)
-                .withFailOnUnresolvedDependencies(this.failOnUnresolvedDependencies)
-                .withLocale(locale)
-                .withLog(getLog())
-                .withProject(project)
-                .withRepositorySystem(repositorySystem)
-                .withRepositorySystemSession(repositorySystemSession)
-                .withSkip(skip)
-                .withVersionFormat(versionRegex);
+                .withFailOnUnresolvedDependencies(this.failOnUnresolvedDependencies).withLocale(locale)
+                .withLog(getLog()).withProject(project).withRepositorySystem(repositorySystem)
+                .withRepositorySystemSession(repositorySystemSession).withSkip(skip)
+                .withExpandProperties(expandProperties).withVersionFormat(versionRegex)
+                .withNewPromotedDependencies(
+                        newPromotedDependencies == null ? promotedDependencies : newPromotedDependencies)
+                .withOldPromotedDependencies(
+                        oldPromotedDependencies == null ? promotedDependencies : oldPromotedDependencies);
 
         if (revapi == null) {
             bld = bld.withReporter(ReportTimeReporter.class);
@@ -303,8 +304,7 @@ public class ReportAggregateMojo extends ReportMojo {
     }
 
     protected static Plugin findRevapi(MavenProject project) {
-        return project.getBuildPlugins().stream()
-                .filter(p -> "org.revapi:revapi-maven-plugin".equals(p.getKey()))
+        return project.getBuildPlugins().stream().filter(p -> "org.revapi:revapi-maven-plugin".equals(p.getKey()))
                 .findAny().orElse(null);
     }
 
@@ -317,7 +317,7 @@ public class ReportAggregateMojo extends ReportMojo {
 
         if (oldArtifactsXml.getChildCount() == 0) {
             String artifact = oldArtifactsXml.getValue();
-            return new String[]{artifact};
+            return new String[] { artifact };
         } else {
             String[] ret = new String[oldArtifactsXml.getChildCount()];
             for (int i = 0; i < oldArtifactsXml.getChildCount(); ++i) {

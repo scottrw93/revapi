@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 import javax.lang.model.AnnotatedConstruct;
@@ -31,6 +33,7 @@ import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Name;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.TypeParameterElement;
@@ -41,11 +44,13 @@ import javax.lang.model.type.ErrorType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.IntersectionType;
 import javax.lang.model.type.NoType;
+import javax.lang.model.type.NullType;
 import javax.lang.model.type.PrimitiveType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.TypeVisitor;
+import javax.lang.model.type.UnionType;
 import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.SimpleAnnotationValueVisitor7;
@@ -58,24 +63,228 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * A random assortment of methods to help with implementing the Java API checks made public so that
- * extenders don't have to reinvent the wheel.
+ * A random assortment of methods to help with implementing the Java API checks made public so that extenders don't have
+ * to reinvent the wheel.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class Util {
 
-
     private static class StringBuilderAndState<T> {
         final StringBuilder bld = new StringBuilder();
-        final Set<T> visitedObjects = new HashSet<>();
+        final Set<T> visitedObjects = new HashSet<>(4);
+        final Set<Name> forwardTypeVarDecls = new HashSet<>(2);
+        Function<StringBuilderAndState<T>, Runnable> methodInitAndNameOutput;
         boolean visitingMethod;
+        int depth;
+        int anticipatedTypeVarDeclDepth;
     }
 
     private static final Logger LOG = LoggerFactory.getLogger(Util.class);
 
-    private static SimpleTypeVisitor7<Void, StringBuilderAndState<TypeMirror>> toUniqueStringVisitor = new SimpleTypeVisitor7<Void, StringBuilderAndState<TypeMirror>>() {
+    private static SimpleTypeVisitor8<Name, Void> getTypeVariableName = new SimpleTypeVisitor8<Name, Void>() {
+        @Override
+        protected Name defaultAction(TypeMirror e, Void ignore) {
+            return null;
+        }
+
+        @Override
+        public Name visitTypeVariable(TypeVariable t, Void ignored) {
+            return t.asElement().getSimpleName();
+        }
+    };
+
+    private static SimpleTypeVisitor8<Boolean, Void> isJavaLangObject = new SimpleTypeVisitor8<Boolean, Void>() {
+        @Override
+        protected Boolean defaultAction(TypeMirror e, Void aVoid) {
+            return false;
+        }
+
+        @Override
+        public Boolean visitDeclared(DeclaredType t, Void aVoid) {
+            Element el = t.asElement();
+            if (el instanceof TypeElement) {
+                return ((TypeElement) el).getQualifiedName().contentEquals("java.lang.Object");
+            }
+
+            return false;
+        }
+
+    };
+
+    private static class DepthTrackingVisitor<T, S> extends SimpleTypeVisitor8<T, StringBuilderAndState<S>> {
+        @Override
+        public final T visitIntersection(IntersectionType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitIntersection(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitIntersection(IntersectionType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitUnion(UnionType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitUnion(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitUnion(UnionType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitPrimitive(PrimitiveType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitPrimitive(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitPrimitive(PrimitiveType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitNull(NullType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitNull(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitNull(NullType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitArray(ArrayType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitArray(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitArray(ArrayType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitDeclared(DeclaredType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitDeclared(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitDeclared(DeclaredType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitError(ErrorType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitError(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitError(ErrorType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitTypeVariable(TypeVariable t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitTypeVariable(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitTypeVariable(TypeVariable t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitWildcard(WildcardType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitWildcard(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitWildcard(WildcardType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitExecutable(ExecutableType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitExecutable(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitExecutable(ExecutableType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitNoType(NoType t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitNoType(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitNoType(NoType t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+
+        @Override
+        public final T visitUnknown(TypeMirror t, StringBuilderAndState<S> st) {
+            try {
+                st.depth++;
+                return doVisitUnknown(t, st);
+            } finally {
+                st.depth--;
+            }
+        }
+
+        protected T doVisitUnknown(TypeMirror t, StringBuilderAndState<S> st) {
+            return defaultAction(t, st);
+        }
+    }
+
+    private static SimpleTypeVisitor7<Void, StringBuilderAndState<TypeMirror>> toUniqueStringVisitor = new SimpleTypeVisitor8<Void, StringBuilderAndState<TypeMirror>>() {
 
         @Override
         public Void visitPrimitive(PrimitiveType t, StringBuilderAndState<TypeMirror> state) {
@@ -122,7 +331,7 @@ public final class Util {
         public Void visitIntersection(IntersectionType t, StringBuilderAndState<TypeMirror> state) {
             List<? extends TypeMirror> bounds = IgnoreCompletionFailures.in(t::getBounds);
             if (state.visitingMethod) {
-                //the type erasure of an intersection type is the first type
+                // the type erasure of an intersection type is the first type
                 if (!bounds.isEmpty()) {
                     bounds.get(0).accept(this, state);
                 }
@@ -171,7 +380,7 @@ public final class Util {
                 if (extendsBound != null) {
                     extendsBound.accept(this, state);
                 } else {
-                    //super bound or unbound wildcard
+                    // super bound or unbound wildcard
                     state.bld.append("java.lang.Object");
                 }
 
@@ -188,6 +397,9 @@ public final class Util {
             if (extendsBound != null) {
                 extendsBound.accept(this, state);
                 state.bld.append("+");
+            } else {
+                // unbound wildcard
+                state.bld.append("java.lang.Object+");
             }
 
             return null;
@@ -197,7 +409,7 @@ public final class Util {
         public Void visitExecutable(ExecutableType t, StringBuilderAndState<TypeMirror> state) {
             state.bld.append("(");
 
-            //we will be producing the erased type of the method, because that's what uniquely identifies it
+            // we will be producing the erased type of the method, because that's what uniquely identifies it
             state.visitingMethod = true;
 
             Iterator<? extends TypeMirror> it = IgnoreCompletionFailures.in(t::getParameterTypes).iterator();
@@ -245,7 +457,7 @@ public final class Util {
 
         @Override
         public Void visitError(ErrorType t, StringBuilderAndState<TypeMirror> state) {
-            //the missing types are like declared types but don't have any further info on them apart from the name...
+            // the missing types are like declared types but don't have any further info on them apart from the name...
             state.bld.append(((TypeElement) t.asElement()).getQualifiedName());
             return null;
         }
@@ -266,10 +478,10 @@ public final class Util {
         }
     };
 
-    private static SimpleTypeVisitor7<Void, StringBuilderAndState<TypeMirror>> toHumanReadableStringVisitor = new SimpleTypeVisitor7<Void, StringBuilderAndState<TypeMirror>>() {
+    private static SimpleTypeVisitor7<Void, StringBuilderAndState<TypeMirror>> toHumanReadableStringVisitor = new DepthTrackingVisitor<Void, TypeMirror>() {
 
         @Override
-        public Void visitPrimitive(PrimitiveType t, StringBuilderAndState<TypeMirror> state) {
+        protected Void doVisitPrimitive(PrimitiveType t, StringBuilderAndState<TypeMirror> state) {
             switch (t.getKind()) {
             case BOOLEAN:
                 state.bld.append("boolean");
@@ -303,40 +515,43 @@ public final class Util {
         }
 
         @Override
-        public Void visitArray(ArrayType t, StringBuilderAndState<TypeMirror> state) {
+        protected Void doVisitArray(ArrayType t, StringBuilderAndState<TypeMirror> state) {
             IgnoreCompletionFailures.in(t::getComponentType).accept(this, state);
             state.bld.append("[]");
             return null;
         }
 
         @Override
-        public Void visitTypeVariable(TypeVariable t, StringBuilderAndState<TypeMirror> state) {
-            if (state.visitedObjects.contains(t)) {
-                state.bld.append(t.asElement().getSimpleName());
+        protected Void doVisitTypeVariable(TypeVariable t, StringBuilderAndState<TypeMirror> state) {
+            Name tName = t.asElement().getSimpleName();
+            if (state.depth > state.anticipatedTypeVarDeclDepth && state.forwardTypeVarDecls.contains(tName)) {
+                state.bld.append(tName);
                 return null;
             }
 
-            state.visitedObjects.add(t);
+            state.bld.append(tName);
 
-            state.bld.append(t.asElement().getSimpleName());
+            state.forwardTypeVarDecls.add(tName);
 
-            if (!state.visitingMethod) {
-                TypeMirror lowerBound = IgnoreCompletionFailures.in(t::getLowerBound);
+            TypeMirror lowerBound = IgnoreCompletionFailures.in(t::getLowerBound);
 
-                if (lowerBound != null && lowerBound.getKind() != TypeKind.NULL) {
-                    state.bld.append(" super ");
-                    lowerBound.accept(this, state);
-                }
+            if (lowerBound != null && lowerBound.getKind() != TypeKind.NULL) {
+                state.bld.append(" super ");
+                lowerBound.accept(this, state);
+            }
 
+            TypeMirror upperBound = IgnoreCompletionFailures.in(t::getUpperBound);
+
+            if (!isJavaLangObject.visit(upperBound)) {
                 state.bld.append(" extends ");
-                IgnoreCompletionFailures.in(t::getUpperBound).accept(this, state);
+                upperBound.accept(this, state);
             }
 
             return null;
         }
 
         @Override
-        public Void visitWildcard(WildcardType t, StringBuilderAndState<TypeMirror> state) {
+        protected Void doVisitWildcard(WildcardType t, StringBuilderAndState<TypeMirror> state) {
             state.bld.append("?");
 
             TypeMirror superBound = IgnoreCompletionFailures.in(t::getSuperBound);
@@ -355,12 +570,38 @@ public final class Util {
         }
 
         @Override
-        public Void visitExecutable(ExecutableType t, StringBuilderAndState<TypeMirror> state) {
-            visitTypeVars(IgnoreCompletionFailures.in(t::getTypeVariables), state);
+        protected Void doVisitExecutable(ExecutableType t, StringBuilderAndState<TypeMirror> state) {
+            Runnable methodNameRenderer = null;
+            if (state.methodInitAndNameOutput != null) {
+                methodNameRenderer = state.methodInitAndNameOutput.apply(state);
+            }
+
+            int currentTypeDeclDepth = state.anticipatedTypeVarDeclDepth;
+            state.anticipatedTypeVarDeclDepth = state.depth + 1;
+            List<? extends TypeVariable> typeVars = IgnoreCompletionFailures.in(t::getTypeVariables);
+            visitTypeVars(typeVars, state);
+            List<Name> typeVarNames = typeVars.stream().map(v -> v.asElement().getSimpleName())
+                    .filter(v -> !state.forwardTypeVarDecls.contains(v)).collect(Collectors.toList());
+            state.forwardTypeVarDecls.addAll(typeVarNames);
+            state.anticipatedTypeVarDeclDepth = currentTypeDeclDepth;
 
             state.visitingMethod = true;
 
+            if (!typeVars.isEmpty()) {
+                state.bld.append(" ");
+            }
+
+            currentTypeDeclDepth = state.anticipatedTypeVarDeclDepth;
+            state.anticipatedTypeVarDeclDepth = state.depth;
+
             IgnoreCompletionFailures.in(t::getReturnType).accept(this, state);
+
+            state.bld.append(" ");
+
+            if (methodNameRenderer != null) {
+                methodNameRenderer.run();
+            }
+
             state.bld.append("(");
 
             Iterator<? extends TypeMirror> it = IgnoreCompletionFailures.in(t::getParameterTypes).iterator();
@@ -386,11 +627,13 @@ public final class Util {
             }
 
             state.visitingMethod = false;
+            state.forwardTypeVarDecls.removeAll(typeVarNames);
+            state.anticipatedTypeVarDeclDepth = currentTypeDeclDepth;
             return null;
         }
 
         @Override
-        public Void visitNoType(NoType t, StringBuilderAndState<TypeMirror> state) {
+        protected Void doVisitNoType(NoType t, StringBuilderAndState<TypeMirror> state) {
             switch (t.getKind()) {
             case VOID:
                 state.bld.append("void");
@@ -406,20 +649,40 @@ public final class Util {
         }
 
         @Override
-        public Void visitDeclared(DeclaredType t, StringBuilderAndState<TypeMirror> state) {
-            CharSequence name = ((TypeElement) t.asElement()).getQualifiedName();
+        protected Void doVisitDeclared(DeclaredType t, StringBuilderAndState<TypeMirror> state) {
+            int anticipatedTypeVarDeclDepth = state.anticipatedTypeVarDeclDepth;
+            int depth = state.depth;
+
+            CharSequence name;
+            if (t.getEnclosingType().getKind() != TypeKind.NONE) {
+                state.depth--; // we need to visit the parent with the same depth as this type
+                visit(t.getEnclosingType(), state);
+                state.depth = depth;
+                state.anticipatedTypeVarDeclDepth = anticipatedTypeVarDeclDepth;
+                ((DeclaredType) t.getEnclosingType()).getTypeArguments()
+                        .forEach(a -> state.forwardTypeVarDecls.add(getTypeVariableName.visit(a)));
+
+                name = "." + t.asElement().getSimpleName();
+            } else {
+                name = ((TypeElement) t.asElement()).getQualifiedName();
+            }
+
             state.bld.append(name);
             try {
+                if (state.depth == 1) {
+                    state.anticipatedTypeVarDeclDepth = 2;
+                }
                 visitTypeVars(IgnoreCompletionFailures.in(t::getTypeArguments), state);
+                state.anticipatedTypeVarDeclDepth = anticipatedTypeVarDeclDepth;
             } catch (RuntimeException e) {
-                LOG.debug("Failed to enumerate type arguments of '" + name + "'. Class is missing?", e);
+                LOG.error("Failed to enumerate type arguments of '" + name + "'. Class is missing?", e);
             }
 
             return null;
         }
 
         @Override
-        public Void visitIntersection(IntersectionType t, StringBuilderAndState<TypeMirror> state) {
+        protected Void doVisitIntersection(IntersectionType t, StringBuilderAndState<TypeMirror> state) {
             Iterator<? extends TypeMirror> it = IgnoreCompletionFailures.in(t::getBounds).iterator();
             if (it.hasNext()) {
                 it.next().accept(this, state);
@@ -428,7 +691,7 @@ public final class Util {
             TypeVisitor<Void, StringBuilderAndState<TypeMirror>> me = this;
 
             it.forEachRemaining(b -> {
-                state.bld.append(", ");
+                state.bld.append(" & ");
                 b.accept(me, state);
             });
 
@@ -436,24 +699,35 @@ public final class Util {
         }
 
         @Override
-        public Void visitError(ErrorType t, StringBuilderAndState<TypeMirror> state) {
+        protected Void doVisitError(ErrorType t, StringBuilderAndState<TypeMirror> state) {
             state.bld.append(((TypeElement) t.asElement()).getQualifiedName());
             return null;
         }
 
-        private void visitTypeVars(List<? extends TypeMirror> vars, StringBuilderAndState<TypeMirror> state) {
+        private boolean visitTypeVars(List<? extends TypeMirror> vars, StringBuilderAndState<TypeMirror> state) {
             if (!vars.isEmpty()) {
-                state.bld.append("<");
-                Iterator<? extends TypeMirror> it = vars.iterator();
-                it.next().accept(this, state);
-
-                while (it.hasNext()) {
-                    state.bld.append(", ");
+                Set<Name> names = vars.stream().map(v -> getTypeVariableName.visit(v)).collect(Collectors.toSet());
+                names.removeAll(state.forwardTypeVarDecls);
+                state.forwardTypeVarDecls.addAll(names);
+                try {
+                    state.bld.append("<");
+                    Iterator<? extends TypeMirror> it = vars.iterator();
                     it.next().accept(this, state);
+
+                    while (it.hasNext()) {
+                        state.bld.append(", ");
+                        it.next().accept(this, state);
+                    }
+
+                    state.bld.append(">");
+                } finally {
+                    state.forwardTypeVarDecls.removeAll(names);
                 }
 
-                state.bld.append(">");
+                return true;
             }
+
+            return false;
         }
 
     };
@@ -466,68 +740,59 @@ public final class Util {
                 enclosing.accept(this, state);
                 state.bld.append(".").append(e.getSimpleName());
             } else if (enclosing instanceof ExecutableElement) {
-                if (state.visitingMethod) {
-                    //we're visiting a method, so we need to output the in a simple way
-                    e.asType().accept(toHumanReadableStringVisitor, state);
-                    //NOTE the names of method params seem not to be available
-                    //stringBuilder.append(" ").append(e.getSimpleName());
-                } else {
-                    //this means someone asked to directly output a string representation of a method parameter
-                    //in this case, we need to identify the parameter inside the full method signature so that
-                    //the full location is available.
-                    int paramIdx = ((ExecutableElement) enclosing).getParameters().indexOf(e);
-                    enclosing.accept(this, state);
-                    int openPar = state.bld.indexOf("(");
-                    int closePar = state.bld.indexOf(")", openPar);
+                // this means someone asked to directly output a string representation of a method parameter
+                // in this case, we need to identify the parameter inside the full method signature so that
+                // the full location is available.
+                int paramIdx = ((ExecutableElement) enclosing).getParameters().indexOf(e);
+                enclosing.accept(this, state);
+                int openPar = state.bld.indexOf("(");
+                int closePar = state.bld.indexOf(")", openPar);
 
-                    int paramStart = openPar + 1;
-                    int curParIdx = -1;
-                    int parsingState = 0; //0 = normal, 1 = inside type param
-                    int typeParamDepth = 0;
-                    for (int i = openPar + 1; i < closePar; ++i) {
-                        char c = state.bld.charAt(i);
-                        switch (parsingState) {
-                            case 0: //normal type
-                                switch (c) {
-                                    case ',':
-                                        curParIdx++;
-                                        if (curParIdx == paramIdx) {
-                                            String par = state.bld.substring(paramStart, i);
-                                            state.bld.replace(paramStart, i, "===" + par + "===");
-                                        } else {
-                                            //accommodate for the space after commas for the second and further parameters
-                                            paramStart = i + (paramIdx == 0 ? 1 : 2);
-                                        }
-                                        break;
-                                    case '<':
-                                        parsingState = 1;
-                                        typeParamDepth = 1;
-                                        break;
-                                }
-                                break;
-                            case 1: //inside type param
-                                switch (c) {
-                                    case '<':
-                                        typeParamDepth++;
-                                        break;
-                                    case '>':
-                                        typeParamDepth--;
-                                        if (typeParamDepth == 0) {
-                                            parsingState = 0;
-                                        }
-                                        break;
-                                }
-                                break;
+                int paramStart = openPar + 1;
+                int curParIdx = -1;
+                int parsingState = 0; // 0 = normal, 1 = inside type param
+                int typeParamDepth = 0;
+                for (int i = openPar + 1; i < closePar; ++i) {
+                    char c = state.bld.charAt(i);
+                    switch (parsingState) {
+                    case 0: // normal type
+                        switch (c) {
+                        case ',':
+                            curParIdx++;
+                            if (curParIdx == paramIdx) {
+                                String par = state.bld.substring(paramStart, i);
+                                state.bld.replace(paramStart, i, "===" + par + "===");
+                            } else {
+                                // accommodate for the space after commas for the second and further parameters
+                                paramStart = i + (paramIdx == 0 ? 1 : 2);
+                            }
+                            break;
+                        case '<':
+                            parsingState = 1;
+                            typeParamDepth = 1;
+                            break;
                         }
-                    }
-
-                    if (++curParIdx == paramIdx) {
-                        String par = state.bld.substring(paramStart, closePar);
-                        state.bld.replace(paramStart, closePar, "===" + par + "===");
+                        break;
+                    case 1: // inside type param
+                        switch (c) {
+                        case '<':
+                            typeParamDepth++;
+                            break;
+                        case '>':
+                            typeParamDepth--;
+                            if (typeParamDepth == 0) {
+                                parsingState = 0;
+                            }
+                            break;
+                        }
+                        break;
                     }
                 }
-            } else {
-                state.bld.append(e.getSimpleName());
+
+                if (++curParIdx == paramIdx) {
+                    String par = state.bld.substring(paramStart, closePar);
+                    state.bld.replace(paramStart, closePar, "===" + par + "===");
+                }
             }
 
             return null;
@@ -541,100 +806,56 @@ public final class Util {
 
         @Override
         public Void visitType(TypeElement e, StringBuilderAndState<TypeMirror> state) {
-            state.bld.append(e.getQualifiedName());
-
-            List<? extends TypeParameterElement> typePars = IgnoreCompletionFailures.in(e::getTypeParameters);
-            if (typePars.size() > 0) {
-                state.bld.append("<");
-
-                typePars.get(0).accept(this, state);
-                for (int i = 1; i < typePars.size(); ++i) {
-                    state.bld.append(", ");
-                    typePars.get(i).accept(this, state);
-                }
-                state.bld.append(">");
-            }
-
-            return null;
+            return e.asType().accept(toHumanReadableStringVisitor, state);
         }
 
         @Override
         public Void visitExecutable(ExecutableElement e, StringBuilderAndState<TypeMirror> state) {
-            state.visitingMethod = true;
+            state.methodInitAndNameOutput = st -> {
+                // we need to initialize the forward decls of the type here so that they are remembered for the rest
+                // of the method rendering
+                Element parent = e.getEnclosingElement();
+                List<Name> names = new ArrayList<>(4);
+                while (parent instanceof TypeElement) {
+                    TypeElement type = (TypeElement) parent;
+                    type.getTypeParameters().stream().map(p -> getTypeVariableName.visit(p.asType()))
+                            .forEach(names::add);
 
-            try {
-                List<? extends TypeParameterElement> typePars = IgnoreCompletionFailures.in(e::getTypeParameters);
-                if (typePars.size() > 0) {
-                    state.bld.append("<");
-
-                    typePars.get(0).accept(this, state);
-                    for (int i = 1; i < typePars.size(); ++i) {
-                        state.bld.append(", ");
-                        typePars.get(i).accept(this, state);
-                    }
-                    state.bld.append("> ");
+                    parent = parent.getEnclosingElement();
                 }
+                st.forwardTypeVarDecls.addAll(names);
 
-                IgnoreCompletionFailures.in(e::getReturnType).accept(toHumanReadableStringVisitor, state);
-                state.bld.append(" ");
-                e.getEnclosingElement().accept(this, state);
-                state.bld.append("::").append(e.getSimpleName()).append("(");
+                return () -> {
+                    int depth = st.depth;
+                    try {
+                        // we're outputting the declaring type and that type might be declared with type params
+                        // we need to reset the depth for this, so that the logic correctly expands type var decls
+                        st.depth = 0;
+                        e.getEnclosingElement().accept(this, st);
 
-                List<? extends VariableElement> pars = IgnoreCompletionFailures.in(e::getParameters);
-                if (pars.size() > 0) {
-                    pars.get(0).accept(this, state);
-                    for (int i = 1; i < pars.size(); ++i) {
-                        state.bld.append(", ");
-                        pars.get(i).accept(this, state);
+                        // we need to add the type param forward decls again, because they've been reset in the above
+                        // rendering.
+                        st.forwardTypeVarDecls.addAll(names);
+
+                        st.bld.append("::").append(e.getSimpleName());
+                    } finally {
+                        st.depth = depth;
                     }
-                }
+                };
+            };
 
-                state.bld.append(")");
+            e.asType().accept(toHumanReadableStringVisitor, state);
 
-                List<? extends TypeMirror> thrownTypes = IgnoreCompletionFailures.in(e::getThrownTypes);
-
-                if (thrownTypes.size() > 0) {
-                    state.bld.append(" throws ");
-                    thrownTypes.get(0).accept(toHumanReadableStringVisitor, state);
-                    for (int i = 1; i < thrownTypes.size(); ++i) {
-                        state.bld.append(", ");
-                        thrownTypes.get(i).accept(toHumanReadableStringVisitor, state);
-                    }
-                }
-
-                return null;
-            } finally {
-                state.visitingMethod = false;
-            }
+            return null;
         }
 
         @Override
         public Void visitTypeParameter(TypeParameterElement e, StringBuilderAndState<TypeMirror> state) {
-            state.bld.append(e.getSimpleName());
-            List<? extends TypeMirror> bounds = IgnoreCompletionFailures.in(e::getBounds);
-            if (bounds.size() > 0) {
-                if (bounds.size() == 1) {
-                    TypeMirror firstBound = bounds.get(0);
-                    String bs = toHumanReadableString(firstBound);
-                    if (!"java.lang.Object".equals(bs)) {
-                        state.bld.append(" extends ").append(bs);
-                    }
-                } else {
-                    state.bld.append(" extends ");
-                    bounds.get(0).accept(toHumanReadableStringVisitor, state);
-                    for (int i = 1; i < bounds.size(); ++i) {
-                        state.bld.append(", ");
-                        bounds.get(i).accept(toHumanReadableStringVisitor, state);
-                    }
-                }
-            }
-
-            return null;
+            return e.asType().accept(toHumanReadableStringVisitor, state);
         }
     };
 
-    private static SimpleAnnotationValueVisitor7<String, Void> annotationValueVisitor =
-            new SimpleAnnotationValueVisitor7<String, Void>() {
+    private static final SimpleAnnotationValueVisitor7<String, Void> annotationValueVisitor = new SimpleAnnotationValueVisitor7<String, Void>() {
 
         @Override
         protected String defaultAction(Object o, Void ignored) {
@@ -710,8 +931,10 @@ public final class Util {
      * To be used to compare types from different compilations (which are not comparable by standard means in Types).
      * This just compares the type names.
      *
-     * @param t1 first type
-     * @param t2 second type
+     * @param t1
+     *            first type
+     * @param t2
+     *            second type
      *
      * @return true if the types have the same fqn, false otherwise
      */
@@ -722,6 +945,16 @@ public final class Util {
         return t1Name.equals(t2Name);
     }
 
+    /**
+     * Constructs a human readable representation of the supplied element or type mirror. Note that in some cases the
+     * representation might be "surprising". Especially for {@link ExecutableType} for which there is no way of getting
+     * reliably at the method name or the type declaring the method.
+     *
+     * @param construct
+     *            the element or type mirror to render
+     * 
+     * @return a human readable representation of the construct
+     */
     @Nonnull
     public static String toHumanReadableString(@Nonnull AnnotatedConstruct construct) {
         StringBuilderAndState<TypeMirror> state = new StringBuilderAndState<>();
@@ -737,7 +970,9 @@ public final class Util {
     /**
      * Represents the type mirror as a string in such a way that it can be used for equality comparisons.
      *
-     * @param t type to convert to string
+     * @param t
+     *            type to convert to string
+     * 
      * @return the string representation of the type that is fit for equality comparisons
      */
     @Nonnull
@@ -763,11 +998,13 @@ public final class Util {
     }
 
     /**
-     * Returns all the super classes of given type. I.e. the returned list does NOT contain any interfaces
-     * the class or tis superclasses implement.
+     * Returns all the super classes of given type. I.e. the returned list does NOT contain any interfaces 0 * the class
+     * or tis superclasses implement.
      *
-     * @param types the Types instance of the compilation environment from which the type comes from
-     * @param type  the type
+     * @param types
+     *            the Types instance of the compilation environment from which the type comes from
+     * @param type
+     *            the type
      *
      * @return the list of super classes
      */
@@ -783,21 +1020,23 @@ public final class Util {
                 superTypes = types.directSupertypes(superClass);
             }
         } catch (RuntimeException e) {
-            LOG.debug("Failed to find all super classes of type '" + toHumanReadableString(type) + ". Possibly " +
-                "missing classes?", e);
+            LOG.debug("Failed to find all super classes of type '" + toHumanReadableString(type) + ". Possibly "
+                    + "missing classes?", e);
         }
 
         return ret;
     }
 
     /**
-     * Similar to {@link #getAllSuperClasses(javax.lang.model.util.Types, javax.lang.model.type.TypeMirror)} but
-     * returns all super types including implemented interfaces.
+     * Similar to {@link #getAllSuperClasses(javax.lang.model.util.Types, javax.lang.model.type.TypeMirror)} but returns
+     * all super types including implemented interfaces.
      *
-     * @param types the Types instance of the compilation environment from which the type comes from
-     * @param type  the type
+     * @param types
+     *            the Types instance of the compilation environment from which the type comes from
+     * @param type
+     *            the type
      *
-     * @return the list of super tpyes
+     * @return the list of super types
      */
     @Nonnull
     public static List<TypeMirror> getAllSuperTypes(@Nonnull Types types, @Nonnull TypeMirror type) {
@@ -811,12 +1050,15 @@ public final class Util {
      * Similar to {@link #getAllSuperTypes(javax.lang.model.util.Types, javax.lang.model.type.TypeMirror)} but avoids
      * instantiation of a new list.
      *
-     * @param types  the Types instance of the compilation environment from which the type comes from
-     * @param type   the type
-     * @param result the list to add the results to.
+     * @param types
+     *            the Types instance of the compilation environment from which the type comes from
+     * @param type
+     *            the type
+     * @param result
+     *            the list to add the results to.
      */
     public static void fillAllSuperTypes(@Nonnull Types types, @Nonnull TypeMirror type,
-        @Nonnull List<TypeMirror> result) {
+            @Nonnull List<TypeMirror> result) {
 
         try {
             List<? extends TypeMirror> superTypes = types.directSupertypes(type);
@@ -826,8 +1068,8 @@ public final class Util {
                 fillAllSuperTypes(types, t, result);
             }
         } catch (RuntimeException e) {
-            LOG.debug("Failed to find all super types of type '" + toHumanReadableString(type) + ". Possibly " +
-                "missing classes?", e);
+            LOG.debug("Failed to find all super types of type '" + toHumanReadableString(type) + ". Possibly "
+                    + "missing classes?", e);
         }
     }
 
@@ -857,24 +1099,26 @@ public final class Util {
                 fillAllSuperInterfaces(types, t, result);
             }
         } catch (RuntimeException e) {
-            LOG.debug("Failed to find all super interfaces of type '" + toHumanReadableString(type) + ". Possibly " +
-                    "missing classes?", e);
+            LOG.debug("Failed to find all super interfaces of type '" + toHumanReadableString(type) + ". Possibly "
+                    + "missing classes?", e);
         }
     }
 
     /**
-     * Checks whether given type is a sub type or is equal to one of the provided types.
-     * Note that this does not require the type to come from the same type "environment"
-     * or compilation as the super types.
+     * Checks whether given type is a sub type or is equal to one of the provided types. Note that this does not require
+     * the type to come from the same type "environment" or compilation as the super types.
      *
-     * @param type            the type to check
-     * @param superTypes      the list of supposed super types
-     * @param typeEnvironment the environment in which the type lives
+     * @param type
+     *            the type to check
+     * @param superTypes
+     *            the list of supposed super types
+     * @param typeEnvironment
+     *            the environment in which the type lives
      *
      * @return true if type a sub type of one of the provided super types, false otherwise.
      */
     public static boolean isSubtype(@Nonnull TypeMirror type, @Nonnull List<? extends TypeMirror> superTypes,
-        @Nonnull Types typeEnvironment) {
+            @Nonnull Types typeEnvironment) {
 
         List<TypeMirror> typeSuperTypes = getAllSuperTypes(typeEnvironment, type);
         typeSuperTypes.add(0, type);
@@ -896,19 +1140,18 @@ public final class Util {
      * Extracts the names of the attributes from the executable elements that represents them in the given map and
      * returns a map keyed by those names.
      * <p>
-     * I.e. while representing annotation attributes on an annotation type by executable elements is technically
-     * correct
-     * it is more convenient to address them simply by their names, which, in case of annotation types, are unique
-     * (i.e. you cannot overload an annotation attribute, because they cannot have method parameters).
+     * I.e. while representing annotation attributes on an annotation type by executable elements is technically correct
+     * it is more convenient to address them simply by their names, which, in case of annotation types, are unique (i.e.
+     * you cannot overload an annotation attribute, because they cannot have method parameters).
      *
-     * @param attributes the attributes as obtained by
-     *                   {@link javax.lang.model.element.AnnotationMirror#getElementValues()}
+     * @param attributes
+     *            the attributes as obtained by {@link javax.lang.model.element.AnnotationMirror#getElementValues()}
      *
      * @return the equivalent of the supplied map keyed by attribute names instead of the full-blown executable elements
      */
     @Nonnull
     public static Map<String, Map.Entry<? extends ExecutableElement, ? extends AnnotationValue>> keyAnnotationAttributesByName(
-        @Nonnull Map<? extends ExecutableElement, ? extends AnnotationValue> attributes) {
+            @Nonnull Map<? extends ExecutableElement, ? extends AnnotationValue> attributes) {
         Map<String, Map.Entry<? extends ExecutableElement, ? extends AnnotationValue>> result = new LinkedHashMap<>();
         for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> e : attributes.entrySet()) {
             result.put(e.getKey().getSimpleName().toString(), e);
@@ -939,8 +1182,8 @@ public final class Util {
 
             @Override
             public Boolean visitEnumConstant(VariableElement c, Object o) {
-                return o instanceof VariableElement &&
-                    c.getSimpleName().toString().equals(((VariableElement) o).getSimpleName().toString());
+                return o instanceof VariableElement
+                        && c.getSimpleName().toString().equals(((VariableElement) o).getSimpleName().toString());
             }
 
             @Override
@@ -963,12 +1206,12 @@ public final class Util {
                 }
 
                 Map<String, Map.Entry<? extends ExecutableElement, ? extends AnnotationValue>> aVals = keyAnnotationAttributesByName(
-                    a.getElementValues());
+                        a.getElementValues());
                 Map<String, Map.Entry<? extends ExecutableElement, ? extends AnnotationValue>> oVals = keyAnnotationAttributesByName(
-                    oa.getElementValues());
+                        oa.getElementValues());
 
                 for (Map.Entry<String, Map.Entry<? extends ExecutableElement, ? extends AnnotationValue>> aVal : aVals
-                    .entrySet()) {
+                        .entrySet()) {
                     String name = aVal.getKey();
                     Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> aAttr = aVal.getValue();
                     Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> oAttr = oVals.get(name);
@@ -1017,8 +1260,10 @@ public final class Util {
      * be able to find some classes if there are conflicts in the canonical names (but that theoretically cannot happen
      * because the compiler should refuse to compile code with conflicting canonical names).
      *
-     * @param elements   the elements instance to search the classpath
-     * @param binaryName the binary name of the class
+     * @param elements
+     *            the elements instance to search the classpath
+     * @param binaryName
+     *            the binary name of the class
      *
      * @return the type element with given binary name
      */
@@ -1029,75 +1274,89 @@ public final class Util {
     private static TypeElement findTypeByBinaryName(Elements elements, StringBuilder binaryName) {
         TypeElement ret;
 
-        //first, a quick check for the case where the name has just dollars in it, but is not a nested class.
-        //Scala seems to use this for its generated classes.
-        //Javac can have real trouble trying to initialize member classes... Let's guard for that here...
+        // just for laughs and giggles, let's track the number of lookups we make...
+        int lookups = 1;
+
+        // first, a quick check for the case where the name has just dollars in it, but is not a nested class.
+        // Scala seems to use this for its generated classes.
+        // Javac can have real trouble trying to initialize member classes... Let's guard for that here...
         try {
             ret = elements.getTypeElement(binaryName);
             if (ret != null) {
-                return ret;
+                return traceLookupResult(binaryName, ret, lookups);
             }
         } catch (Exception __) {
-            //k, we're most probably dealing with a member class. There is no point in continuing, the class is not
-            //reachable by any caller but from within a method the member class is defined.
-            return null;
+            // k, we're most probably dealing with a member class. There is no point in continuing, the class is not
+            // reachable by any caller but from within a method the member class is defined.
+            return traceLookupResult(binaryName, null, lookups);
         }
 
         int lastIndex = binaryName.length() - 1;
 
-        //remember the exact positions of the $ in the binaryName
-        List<Integer> tmp = new ArrayList<>(4);
+        // remember the exact positions of the $ in the binaryName
+        List<Integer> tmpDollars = new ArrayList<>(4);
+        List<Integer> tmpDigits = new ArrayList<>(4);
         int dollarPos = -1;
         while (true) {
             dollarPos = binaryName.indexOf("$", dollarPos + 1);
             if (dollarPos != -1) {
-                //the $ at the start or end of the class name cannot be an inner class marker - it is always part of
-                //the name
+                // the $ at the start or end of the class name cannot be an inner class marker - it is always part of
+                // the name
                 if (dollarPos > 0 && dollarPos < lastIndex && binaryName.charAt(dollarPos - 1) != '.'
                         && binaryName.charAt(dollarPos + 1) != '.') {
-                    tmp.add(dollarPos);
+                    tmpDollars.add(dollarPos);
+
+                    if (Character.isDigit(binaryName.charAt(dollarPos + 1))) {
+                        tmpDigits.add(dollarPos + 1);
+                    }
                 }
             } else {
                 break;
             }
         }
 
-        //convert to a faster int[]
-        int[] dollarPoses = new int[tmp.size()];
+        // convert to a faster int[]
+        int[] dollarPoses = new int[tmpDollars.size()];
         for (int i = 0; i < dollarPoses.length; ++i) {
-            dollarPoses[i] = tmp.get(i);
+            dollarPoses[i] = tmpDollars.get(i);
         }
 
-        //ok, $ in class names are uncommon (at least in java), so let's try just replacing all dollars first
-        //if the name is valid even if all dollars were replaced by . (i.e. all class names without $), let's try
-        //resolve it as such..
-        if (isValidDotConstellation(dollarPoses, dollarPoses.length)) {
+        int[] digitPoses = new int[tmpDigits.size()];
+        for (int i = 0; i < digitPoses.length; ++i) {
+            digitPoses[i] = tmpDigits.get(i);
+        }
+
+        // ok, $ in class names are uncommon (at least in java), so let's try just replacing all dollars first
+        // if the name is valid even if all dollars were replaced by . (i.e. all class names without $), let's try
+        // resolve it as such..
+        if (isValidDotConstellation(dollarPoses, digitPoses, dollarPoses.length)) {
             for (int i = 0; i < dollarPoses.length; ++i) {
                 binaryName.setCharAt(dollarPoses[i], '.');
             }
 
             try {
+                lookups++;
                 ret = elements.getTypeElement(binaryName);
                 if (ret != null) {
-                    return ret;
+                    return traceLookupResult(binaryName, ret, lookups);
                 } else {
-                    //shame, we need to go through the slow path
+                    // shame, we need to go through the slow path
                     for (int i = 0; i < dollarPoses.length; ++i) {
                         binaryName.setCharAt(dollarPoses[i], '$');
                     }
                 }
             } catch (Exception __) {
-                return null;
+                return traceLookupResult(binaryName, null, lookups);
             }
         }
 
-        //we'll need to remember what were the positions of dots as we iterate through all the possibilities..
+        // we'll need to remember what were the positions of dots as we iterate through all the possibilities..
         int[] dotPoses = new int[dollarPoses.length];
 
-        //we already tried no nesting
+        // we already tried no nesting
         int nestingLevel = 1;
 
-        //we already tried the maximum nesting level (i.e. all dollars replaced)
+        // we already tried the maximum nesting level (i.e. all dollars replaced)
         while (ret == null && nestingLevel < dollarPoses.length) {
             // set the initial positions of dots
             firstDotConstellation(dollarPoses, dotPoses, nestingLevel);
@@ -1107,7 +1366,7 @@ public final class Util {
             int attempt = 0;
 
             while (attempt++ < constellations) {
-                if (!isValidDotConstellation(dotPoses, nestingLevel)) {
+                if (!isValidDotConstellation(dotPoses, digitPoses, nestingLevel)) {
                     nextDotConstellation(dollarPoses, dotPoses, nestingLevel);
                     continue;
                 }
@@ -1120,13 +1379,14 @@ public final class Util {
                 }
 
                 try {
+                    lookups++;
                     ret = elements.getTypeElement(binaryName);
                     if (ret != null) {
                         break;
                     }
                 } catch (Exception e) {
-                    //see the top of the method for the reason we're breaking out here...
-                    return null;
+                    // see the top of the method for the reason we're breaking out here...
+                    return traceLookupResult(binaryName, null, lookups);
                 }
 
                 for (int i = 0; i < dotPoses.length; ++i) {
@@ -1145,6 +1405,18 @@ public final class Util {
             }
         }
 
+        return traceLookupResult(binaryName, ret, lookups);
+    }
+
+    private static TypeElement traceLookupResult(CharSequence binaryName, TypeElement ret, int lookups) {
+        if (LOG.isTraceEnabled()) {
+            if (ret != null) {
+                LOG.trace(binaryName + ": " + lookups + " lookups to success.");
+            } else {
+                LOG.trace(binaryName + ": " + lookups + " lookups to failure.");
+            }
+        }
+
         return ret;
     }
 
@@ -1152,11 +1424,15 @@ public final class Util {
      * This will set the last nestingLevel elements in the dotPositions to the values present in the dollarPositions.
      * The rest will be set to -1.
      *
-     * <p>In another words the dotPositions array will contain the rightmost dollar positions.
+     * <p>
+     * In another words the dotPositions array will contain the rightmost dollar positions.
      *
-     * @param dollarPositions the positions of the $ in the binary class name
-     * @param dotPositions the positions of the dots to initialize from the dollarPositions
-     * @param nestingLevel the number of dots (i.e. how deep is the nesting of the classes)
+     * @param dollarPositions
+     *            the positions of the $ in the binary class name
+     * @param dotPositions
+     *            the positions of the dots to initialize from the dollarPositions
+     * @param nestingLevel
+     *            the number of dots (i.e. how deep is the nesting of the classes)
      */
     private static void firstDotConstellation(int[] dollarPositions, int[] dotPositions, int nestingLevel) {
         int i = 0;
@@ -1177,9 +1453,12 @@ public final class Util {
      *
      * The values for non-zeros are taken from the dollarPositions array.
      *
-     * @param dollarPositions the positions of $ in the binary class names
-     * @param dotPositions the positions of dots to update with a next available "constellation"
-     * @param nestingLevel the number of $ to replace with .
+     * @param dollarPositions
+     *            the positions of $ in the binary class names
+     * @param dotPositions
+     *            the positions of dots to update with a next available "constellation"
+     * @param nestingLevel
+     *            the number of $ to replace with .
      */
     private static void nextDotConstellation(int[] dollarPositions, int[] dotPositions, int nestingLevel) {
         if (nestingLevel == 0) {
@@ -1233,15 +1512,25 @@ public final class Util {
         return nChooseK(n - 1, k - 1) + nChooseK(n - 1, k);
     }
 
-    private static boolean isValidDotConstellation(int[] dotPositions, int nestingLevel) {
+    private static boolean isValidDotConstellation(int[] dotPositions, int[] digitPositions, int nestingLevel) {
         int assigned = 0;
         int lastAssignedIndex = -1;
 
         for (int i = 0; i < dotPositions.length; ++i) {
             if (dotPositions[i] != -1) {
-                //disallow 2 consecutive $
+                // disallow 2 consecutive $
                 if (lastAssignedIndex != -1 && dotPositions[lastAssignedIndex] == dotPositions[i] - 1) {
                     return false;
+                }
+
+                // disallow a class name starting with a digit
+                int classNameStartIndex = dotPositions[i] + 1;
+                for (int j = 0; j < digitPositions.length; ++j) {
+                    if (digitPositions[j] == classNameStartIndex) {
+                        return false;
+                    } else if (digitPositions[j] > classNameStartIndex) {
+                        break;
+                    }
                 }
 
                 assigned++;

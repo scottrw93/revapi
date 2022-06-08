@@ -1,6 +1,6 @@
 <#--
 
-    Copyright 2014-2019 Lukas Krejci
+    Copyright 2014-2020 Lukas Krejci
     and other contributors as indicated by the @author tags.
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,9 @@ old: ${report.oldElement!"<none>"}
 new: ${report.newElement!"<none>"}
 <#list report.differences as diff>
 ${diff.code}<#if diff.description??>: ${diff.description}</#if>
+<#if diff.justification??>
+${diff.justification}
+</#if>
 <#list diff.classification?keys as compat>${compat}: ${diff.classification?api.get(compat)}<#sep>, </#list>
 </#list>
 <#sep>

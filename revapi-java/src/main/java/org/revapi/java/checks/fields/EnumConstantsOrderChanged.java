@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2022 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,27 +30,20 @@ import org.revapi.Difference;
 import org.revapi.java.spi.CheckBase;
 import org.revapi.java.spi.Code;
 import org.revapi.java.spi.JavaFieldElement;
-import org.revapi.java.spi.JavaTypeElement;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 1.0
  */
 public class EnumConstantsOrderChanged extends CheckBase {
-    private boolean isEnumClass;
-
     @Override
     public EnumSet<Type> getInterest() {
-        return EnumSet.of(Type.CLASS, Type.FIELD);
-    }
-
-    @Override
-    protected void doVisitClass(@Nullable JavaTypeElement oldType, @Nullable JavaTypeElement newType) {
-        isEnumClass = newType != null && newType.getDeclaringElement().getKind() == ElementKind.ENUM;
+        return EnumSet.of(Type.FIELD);
     }
 
     private boolean shouldCheck(JavaFieldElement oldField, JavaFieldElement newField) {
-        return isEnumClass && isBothAccessible(oldField, newField)
+        return isBothAccessible(oldField, newField)
                 && oldField.getDeclaringElement().getKind() == ElementKind.ENUM_CONSTANT
                 && newField.getDeclaringElement().getKind() == ElementKind.ENUM_CONSTANT;
     }
@@ -64,8 +57,8 @@ public class EnumConstantsOrderChanged extends CheckBase {
 
         Predicate<VariableElement> isNotEnumConstant = v -> v.getKind() != ElementKind.ENUM_CONSTANT;
 
-        List<? extends VariableElement> fields = ElementFilter.fieldsIn(oldField.getDeclaringElement().
-                getEnclosingElement().getEnclosedElements());
+        List<? extends VariableElement> fields = ElementFilter
+                .fieldsIn(oldField.getDeclaringElement().getEnclosingElement().getEnclosedElements());
         fields.removeIf(isNotEnumConstant);
 
         int oldIdx = fields.indexOf(oldField.getDeclaringElement());
@@ -92,8 +85,6 @@ public class EnumConstantsOrderChanged extends CheckBase {
         String newIdx = fields.context[1].toString();
 
         return Collections.singletonList(createDifference(Code.FIELD_ENUM_CONSTANT_ORDER_CHANGED,
-                Code.attachmentsFor(fields.oldElement, fields.newElement,
-                        "oldOrdinal", oldIdx,
-                        "newOrdinal", newIdx)));
+                Code.attachmentsFor(fields.oldElement, fields.newElement, "oldOrdinal", oldIdx, "newOrdinal", newIdx)));
     }
 }

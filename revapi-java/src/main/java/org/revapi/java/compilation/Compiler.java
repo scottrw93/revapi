@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,14 +43,17 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 
 import org.revapi.Archive;
+import org.revapi.TreeFilter;
 import org.revapi.java.AnalysisConfiguration;
 import org.revapi.java.Timing;
 import org.revapi.java.spi.JarExtractor;
+import org.revapi.java.spi.JavaElement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class Compiler {
@@ -61,12 +64,12 @@ public final class Compiler {
     private final Iterable<? extends Archive> classPath;
     private final Iterable<? extends Archive> additionalClassPath;
     private final ExecutorService executor;
+    private final TreeFilter<JavaElement> filter;
     private final Iterable<JarExtractor> jarExtractors;
 
-    public Compiler(ExecutorService executor, Writer reportingOutput,
-            Iterable<JarExtractor> jarExtractors,
-            Iterable<? extends Archive> classPath,
-            Iterable<? extends Archive> additionalClassPath) {
+    public Compiler(ExecutorService executor, Writer reportingOutput, Iterable<JarExtractor> jarExtractors,
+            Iterable<? extends Archive> classPath, Iterable<? extends Archive> additionalClassPath,
+            TreeFilter<JavaElement> filter) {
         this.jarExtractors = jarExtractors;
 
         compiler = ToolProvider.getSystemJavaCompiler();
@@ -78,13 +81,12 @@ public final class Compiler {
         this.output = reportingOutput;
         this.classPath = classPath;
         this.additionalClassPath = additionalClassPath;
+        this.filter = filter;
     }
 
     public CompilationValve compile(final ProbingEnvironment environment,
-                                    final AnalysisConfiguration.MissingClassReporting missingClassReporting,
-                                    final boolean ignoreMissingAnnotations,
-                                    final InclusionFilter inclusionFilter)
-            throws Exception {
+            final AnalysisConfiguration.MissingClassReporting missingClassReporting,
+            final boolean ignoreMissingAnnotations) throws Exception {
 
         File targetPath = Files.createTempDirectory("revapi-java").toAbsolutePath().toFile();
 
@@ -101,27 +103,22 @@ public final class Compiler {
         int prefixLength = (int) Math.log10(nofArchives) + 1;
 
         IdentityHashMap<Archive, File> classPathFiles = copyArchives(classPath, lib, 0, prefixLength);
-        IdentityHashMap<Archive, File> additionClassPathFiles = copyArchives(additionalClassPath, lib, classPathSize, prefixLength);
+        IdentityHashMap<Archive, File> additionClassPathFiles = copyArchives(additionalClassPath, lib, classPathSize,
+                prefixLength);
 
-        List<String> options = Arrays.asList(
-            "-d", sourceDir.toString(),
-            "-cp", composeClassPath(lib)
-        );
+        List<String> options = Arrays.asList("-d", sourceDir.toString(), "-cp", composeClassPath(lib));
 
-        List<JavaFileObject> sources = Arrays.<JavaFileObject>asList(
-            new MarkerAnnotationObject(),
-            new ArchiveProbeObject()
-        );
+        List<JavaFileObject> sources = Arrays.<JavaFileObject> asList(new MarkerAnnotationObject(),
+                new ArchiveProbeObject());
 
-        //the locale and charset are actually not important, because the only sources we're providing
-        //are not file-based. The rest of the stuff the compiler will be touching is already compiled
-        //and therefore not affected by the charset.
-        StandardJavaFileManager fileManager = compiler
-                .getStandardFileManager(null, Locale.getDefault(), Charset.forName("UTF-8"));
+        // the locale and charset are actually not important, because the only sources we're providing
+        // are not file-based. The rest of the stuff the compiler will be touching is already compiled
+        // and therefore not affected by the charset.
+        StandardJavaFileManager fileManager = compiler.getStandardFileManager(null, Locale.getDefault(),
+                Charset.forName("UTF-8"));
 
-        final JavaCompiler.CompilationTask task = compiler
-            .getTask(output, fileManager, null, options, Collections.singletonList(ArchiveProbeObject.CLASS_NAME),
-                sources);
+        final JavaCompiler.CompilationTask task = compiler.getTask(output, fileManager, null, options,
+                Collections.singletonList(ArchiveProbeObject.CLASS_NAME), sources);
 
         ProbingAnnotationProcessor processor = new ProbingAnnotationProcessor(environment);
 
@@ -134,7 +131,7 @@ public final class Compiler {
 
             try {
                 new ClasspathScanner(fileManager, environment, classPathFiles, additionClassPathFiles,
-                        missingClassReporting, ignoreMissingAnnotations, inclusionFilter).initTree();
+                        missingClassReporting, ignoreMissingAnnotations, filter).initTree();
             } catch (IOException e) {
                 throw new IllegalStateException("Failed to scan the classpath.", e);
             }
@@ -143,7 +140,6 @@ public final class Compiler {
                 Timing.LOG.debug("Crawl finished for " + environment.getApi());
             }
         });
-
 
         return new CompilationValve(future, targetPath, environment, fileManager);
     }
@@ -175,8 +171,8 @@ public final class Compiler {
         return bld.toString();
     }
 
-    private IdentityHashMap<Archive, File>
-    copyArchives(Iterable<? extends Archive> archives, File parentDir, int startIdx, int prefixLength) {
+    private IdentityHashMap<Archive, File> copyArchives(Iterable<? extends Archive> archives, File parentDir,
+            int startIdx, int prefixLength) {
         IdentityHashMap<Archive, File> ret = new IdentityHashMap<>();
         if (archives == null) {
             return ret;
@@ -189,9 +185,8 @@ public final class Compiler {
             ret.put(a, f);
 
             if (f.exists()) {
-                LOG.warn(
-                    "File " + f.getAbsolutePath() + " with the data of archive '" + a.getName() + "' already exists." +
-                            " Assume it already contains the bits we need.");
+                LOG.warn("File " + f.getAbsolutePath() + " with the data of archive '" + a.getName()
+                        + "' already exists." + " Assume it already contains the bits we need.");
                 continue;
             }
 
@@ -201,7 +196,7 @@ public final class Compiler {
                 Files.copy(data, target);
             } catch (IOException e) {
                 throw new IllegalStateException(
-                    "Failed to copy class path element: " + a.getName() + " to " + f.getAbsolutePath(), e);
+                        "Failed to copy class path element: " + a.getName() + " to " + f.getAbsolutePath(), e);
             }
         }
 

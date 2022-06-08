@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +22,10 @@ import org.eclipse.aether.graph.Dependency;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
-public class ScopeDependencyTraverser implements DependencyTraverser {
+final class ScopeDependencyTraverser implements DependencyTraverser {
     private final String[] topLevelScopes;
     private final String[] transitiveScopes;
     private final int depth;

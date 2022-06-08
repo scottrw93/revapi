@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2022 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,17 +20,17 @@ import static java.util.stream.Collectors.toList;
 
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.StreamSupport;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import org.jboss.dmr.ModelNode;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.revapi.AnalysisContext;
 import org.revapi.Archive;
 import org.revapi.CompatibilityType;
@@ -38,72 +38,98 @@ import org.revapi.Difference;
 import org.revapi.DifferenceSeverity;
 import org.revapi.DifferenceTransform;
 import org.revapi.Element;
+import org.revapi.TransformationResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.3.7
+ * 
+ * @deprecated use the {@link VersionsTransform} instead
  */
-public class SemverIgnoreTransform implements DifferenceTransform<Element> {
+@Deprecated
+public class SemverIgnoreTransform<E extends Element<E>> implements DifferenceTransform<E> {
+    private static final Logger LOG = LoggerFactory.getLogger(SemverIgnoreTransform.class);
+
     private boolean enabled;
     private DifferenceSeverity allowedSeverity;
     private List<String> passThroughDifferences;
 
-    @Nonnull @Override public Pattern[] getDifferenceCodePatterns() {
-        return enabled ? new Pattern[]{Pattern.compile(".*")} : new Pattern[0];
+    @Nonnull
+    @Override
+    public Pattern[] getDifferenceCodePatterns() {
+        return enabled ? new Pattern[] { Pattern.compile(".*") } : new Pattern[0];
     }
 
-    @Nullable @Override public Difference transform(@Nullable Element oldElement, @Nullable Element newElement,
-                                                    @Nonnull Difference difference) {
+    @Override
+    public TransformationResult tryTransform(@Nullable E oldElement, @Nullable E newElement, Difference difference) {
         if (!enabled) {
-            return difference;
+            return TransformationResult.keep();
         }
 
         if (passThroughDifferences.contains(difference.code)) {
-            return difference;
+            return TransformationResult.keep();
         }
 
         if (allowedSeverity == null) {
-            return asBreaking(difference);
+            return TransformationResult.replaceWith(asBreaking(difference));
         } else if (allowedSeverity == DifferenceSeverity.BREAKING) {
-            return null;
+            return TransformationResult.discard();
         } else {
             DifferenceSeverity diffSeverity = getMaxSeverity(difference);
             if (allowedSeverity.ordinal() - diffSeverity.ordinal() >= 0) {
-                return null;
+                return TransformationResult.discard();
             } else {
-                return asBreaking(difference);
+                return TransformationResult.replaceWith(asBreaking(difference));
             }
         }
     }
 
     private Difference asBreaking(Difference d) {
-        return Difference.builder().withCode(d.code)
-                .withDescription(d.description + " (breaks semantic versioning)")
-                .withName("Incompatible with the current version: " + d.name)
-                .addAttachments(d.attachments).addClassifications(d.classification)
-                .addClassification(CompatibilityType.OTHER, DifferenceSeverity.BREAKING).build();
+        Difference.Builder bld = Difference.copy(d)
+                .addClassification(CompatibilityType.OTHER, DifferenceSeverity.BREAKING)
+                .addAttachment("breaksSemanticVersioning", "true");
+
+        if (d.description == null || !d.description.endsWith("(breaks semantic versioning)")) {
+            bld.withDescription(d.description == null ? "(breaks semantic versioning)"
+                    : (d.description + " (breaks semantic versioning)"));
+        }
+
+        if (!d.name.startsWith("Incompatible with the current version: ")) {
+            bld.withName("Incompatible with the current version: " + d.name);
+        }
+
+        return bld.build();
     }
 
     private DifferenceSeverity getMaxSeverity(Difference diff) {
         return diff.classification.values().stream().max((d1, d2) -> d1.ordinal() - d2.ordinal()).get();
     }
 
-    @Override public void close() throws Exception {
+    @Override
+    public void close() throws Exception {
     }
 
-    @Nullable @Override public String getExtensionId() {
+    @Nullable
+    @Override
+    public String getExtensionId() {
         return "revapi.semver.ignore";
     }
 
-    @Nullable @Override public Reader getJSONSchema() {
+    @Nullable
+    @Override
+    public Reader getJSONSchema() {
         return new InputStreamReader(getClass().getResourceAsStream("/META-INF/semver-ignore-schema.json"),
-                Charset.forName("UTF-8"));
+                StandardCharsets.UTF_8);
     }
 
-    @Override public void initialize(@Nonnull AnalysisContext analysisContext) {
-        ModelNode node = analysisContext.getConfiguration();
+    @Override
+    public void initialize(@Nonnull AnalysisContext analysisContext) {
+        JsonNode node = analysisContext.getConfigurationNode();
 
-        enabled = node.get("enabled").isDefined() && node.get("enabled").asBoolean();
+        enabled = node.path("enabled").asBoolean(false);
 
         if (enabled) {
             if (hasMultipleElements(analysisContext.getOldApi().getArchives())
@@ -134,12 +160,14 @@ public class SemverIgnoreTransform implements DifferenceTransform<Element> {
             String oldVersionString = ((Archive.Versioned) oldArchive).getVersion();
             String newVersionString = ((Archive.Versioned) newArchive).getVersion();
 
-            Version oldVersion = Version.parse(oldVersionString);
-            Version newVersion = Version.parse(newVersionString);
+            SemverVersion oldVersion = SemverVersion.parse(oldVersionString, true);
+            SemverVersion newVersion = SemverVersion.parse(newVersionString, true);
 
-            if (newVersion.major == 0 && oldVersion.major == 0 && !node.get("versionIncreaseAllows").isDefined()) {
-                DifferenceSeverity minorChangeAllowed = asSeverity(node.get("versionIncreaseAllows", "minor"), DifferenceSeverity.BREAKING);
-                DifferenceSeverity patchVersionAllowed = asSeverity(node.get("versionIncreaseAllows", "patch"), DifferenceSeverity.NON_BREAKING);
+            if (newVersion.major == 0 && oldVersion.major == 0 && !node.hasNonNull("versionIncreaseAllows")) {
+                DifferenceSeverity minorChangeAllowed = asSeverity(node.path("versionIncreaseAllows").path("minor"),
+                        DifferenceSeverity.BREAKING);
+                DifferenceSeverity patchVersionAllowed = asSeverity(node.path("versionIncreaseAllows").path("patch"),
+                        DifferenceSeverity.NON_BREAKING);
 
                 if (newVersion.minor > oldVersion.minor) {
                     allowedSeverity = minorChangeAllowed;
@@ -149,9 +177,12 @@ public class SemverIgnoreTransform implements DifferenceTransform<Element> {
                     allowedSeverity = null;
                 }
             } else {
-                DifferenceSeverity majorChangeAllowed = asSeverity(node.get("versionIncreaseAllows", "major"), DifferenceSeverity.BREAKING);
-                DifferenceSeverity minorChangeAllowed = asSeverity(node.get("versionIncreaseAllows", "minor"), DifferenceSeverity.NON_BREAKING);
-                DifferenceSeverity patchVersionAllowed = asSeverity(node.get("versionIncreaseAllows", "patch"), DifferenceSeverity.EQUIVALENT);
+                DifferenceSeverity majorChangeAllowed = asSeverity(node.path("versionIncreaseAllows").path("major"),
+                        DifferenceSeverity.BREAKING);
+                DifferenceSeverity minorChangeAllowed = asSeverity(node.path("versionIncreaseAllows").path("minor"),
+                        DifferenceSeverity.NON_BREAKING);
+                DifferenceSeverity patchVersionAllowed = asSeverity(node.path("versionIncreaseAllows").path("patch"),
+                        DifferenceSeverity.EQUIVALENT);
 
                 if (newVersion.major > oldVersion.major) {
                     allowedSeverity = majorChangeAllowed;
@@ -163,10 +194,15 @@ public class SemverIgnoreTransform implements DifferenceTransform<Element> {
             }
 
             passThroughDifferences = Collections.emptyList();
-            if (node.get("passThroughDifferences").isDefined()) {
-                passThroughDifferences =
-                        node.get("passThroughDifferences").asList().stream().map(ModelNode::asString).collect(toList());
+            if (node.hasNonNull("passThroughDifferences")) {
+                passThroughDifferences = StreamSupport.stream(node.path("passThroughDifferences").spliterator(), false)
+                        .map(JsonNode::asText).collect(toList());
             }
+        }
+
+        if (enabled) {
+            LOG.warn("revapi.semver.ignore transform has been deprecated. Please use the new revapi.versions which has"
+                    + " better integration with the new Revapi features.");
         }
     }
 
@@ -181,71 +217,23 @@ public class SemverIgnoreTransform implements DifferenceTransform<Element> {
         return i.hasNext();
     }
 
-    private static final class Version {
-        private static final Pattern SEMVER_PATTERN =
-                Pattern.compile("(\\d+)(\\.(\\d+)(?:\\.)?(\\d*))?(\\.|-|\\+)?([0-9A-Za-z-.]*)?");
-
-        final int major;
-        final int minor;
-        final int patch;
-        final String sep;
-        final String suffix;
-
-        static Version parse(String version) {
-            Matcher m = SEMVER_PATTERN.matcher(version);
-            if (!m.matches()) {
-                throw new IllegalArgumentException("Could not parse the version string '" + version
-                        + "'. It does not follow the semver schema.");
-            }
-
-            int major = Integer.valueOf(m.group(1));
-            String minorMatch = m.group(3);
-            int minor = minorMatch == null || minorMatch.isEmpty() ? 0 : Integer.valueOf(minorMatch);
-            int patch = 0;
-            String patchMatch = m.group(4);
-            if (patchMatch != null && !patchMatch.isEmpty()) {
-                patch = Integer.valueOf(patchMatch);
-            }
-            String sep = m.group(5);
-            String suffix = m.group(6);
-
-            if (sep != null && sep.isEmpty()) {
-                sep = null;
-            }
-
-            if (suffix != null && suffix.isEmpty()) {
-                suffix = null;
-            }
-
-            return new Version(major, minor, patch, sep, suffix);
-        }
-
-        Version(int major, int minor, int patch, String sep, String suffix) {
-            this.major = major;
-            this.minor = minor;
-            this.patch = patch;
-            this.sep = sep;
-            this.suffix = suffix;
-        }
-    }
-
-    private static DifferenceSeverity asSeverity(ModelNode configNode, DifferenceSeverity defaultValue) {
-        if (configNode == null || !configNode.isDefined()) {
+    private static DifferenceSeverity asSeverity(JsonNode configNode, DifferenceSeverity defaultValue) {
+        if (configNode.isMissingNode()) {
             return defaultValue;
         } else {
-            switch (configNode.asString()) {
-                case "none":
-                    return null;
-                case "equivalent":
-                    return DifferenceSeverity.EQUIVALENT;
-                case "nonBreaking":
-                    return DifferenceSeverity.NON_BREAKING;
-                case "potentiallyBreaking":
-                    return DifferenceSeverity.POTENTIALLY_BREAKING;
-                case "breaking":
-                    return DifferenceSeverity.BREAKING;
-                default:
-                    return defaultValue;
+            switch (configNode.asText()) {
+            case "none":
+                return null;
+            case "equivalent":
+                return DifferenceSeverity.EQUIVALENT;
+            case "nonBreaking":
+                return DifferenceSeverity.NON_BREAKING;
+            case "potentiallyBreaking":
+                return DifferenceSeverity.POTENTIALLY_BREAKING;
+            case "breaking":
+                return DifferenceSeverity.BREAKING;
+            default:
+                return defaultValue;
             }
         }
     }

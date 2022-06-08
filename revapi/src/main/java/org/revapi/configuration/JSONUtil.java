@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,44 +24,179 @@ import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.BigIntegerNode;
+import com.fasterxml.jackson.databind.node.BooleanNode;
+import com.fasterxml.jackson.databind.node.DecimalNode;
+import com.fasterxml.jackson.databind.node.DoubleNode;
+import com.fasterxml.jackson.databind.node.IntNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.LongNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import org.jboss.dmr.ModelNode;
 
 /**
- * A utility class for JSON files. The JSON specification doesn't allow comments but the extension's
- * configuration is likely to contain comments so that users can "annotate" what individual configuration items mean.
+ * A utility class for JSON files. The JSON specification doesn't allow comments but the extension's configuration is
+ * likely to contain comments so that users can "annotate" what individual configuration items mean.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class JSONUtil {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private enum State {
         NORMAL, FIRST_SLASH, SINGLE_LINE, MULTI_LINE, STAR_IN_MULTI_LINE, IN_STRING, ESCAPE_IN_STRING
     }
 
-
     private JSONUtil() {
 
     }
 
+    public static JsonNode convert(ModelNode node) {
+        switch (node.getType()) {
+        case LIST:
+            ArrayNode a = JsonNodeFactory.instance.arrayNode();
+            for (ModelNode mn : node.asList()) {
+                a.add(convert(mn));
+            }
+            return a;
+        case OBJECT:
+            ObjectNode o = JsonNodeFactory.instance.objectNode();
+            for (String key : node.keys()) {
+                o.set(key, convert(node.get(key)));
+            }
+            return o;
+        case BOOLEAN:
+            return BooleanNode.valueOf(node.asBoolean());
+        case INT:
+            return IntNode.valueOf(node.asInt());
+        case LONG:
+            return LongNode.valueOf(node.asLong());
+        case BIG_INTEGER:
+            return BigIntegerNode.valueOf(node.asBigInteger());
+        case BIG_DECIMAL:
+            return DecimalNode.valueOf(node.asBigDecimal());
+        case STRING:
+            return TextNode.valueOf(node.asString());
+        case DOUBLE:
+            return DoubleNode.valueOf(node.asDouble());
+        default:
+            return JsonNodeFactory.instance.nullNode();
+        }
+    }
+
+    public static ModelNode convert(JsonNode node) {
+        switch (node.getNodeType()) {
+        case STRING:
+            return new ModelNode().set(node.asText());
+        case BOOLEAN:
+            return new ModelNode().set(node.asBoolean());
+        case OBJECT:
+            ModelNode o = new ModelNode();
+            o.setEmptyObject();
+            Iterator<Map.Entry<String, JsonNode>> it = node.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                o.get(e.getKey()).set(convert(e.getValue()));
+            }
+            return o;
+        case ARRAY:
+            ModelNode a = new ModelNode();
+            a.setEmptyList();
+            for (JsonNode v : node) {
+                a.add(convert(v));
+            }
+            return a;
+        case NUMBER:
+            ModelNode n = new ModelNode();
+            if (node.isBigDecimal()) {
+                n.set(node.decimalValue());
+            } else if (node.isBigInteger()) {
+                n.set(node.bigIntegerValue());
+            } else if (node.isDouble()) {
+                n.set(node.asDouble());
+            } else if (node.isFloat()) {
+                n.set(node.floatValue());
+            } else if (node.isInt()) {
+                n.set(node.asInt());
+            } else if (node.isLong()) {
+                n.set(node.asLong());
+            } else if (node.isShort()) {
+                n.set(node.shortValue());
+            }
+            return n;
+        default:
+            return new ModelNode();
+        }
+    }
+
+    public static JsonNode parse(String string) {
+        try {
+            return OBJECT_MAPPER.readTree(string);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Failed to parse JSON.", e);
+        }
+    }
+
+    public static JsonNode parse(Reader reader) throws IOException {
+        return OBJECT_MAPPER.readTree(reader);
+    }
+
+    public static String toString(JsonNode json) {
+        return json.toPrettyString();
+    }
+
+    public static boolean isNullOrUndefined(@Nullable JsonNode node) {
+        return node == null || node.isNull() || node.isMissingNode();
+    }
+
     /**
-     * @param json the JSON-encoded data
-     * @param charset the charset of the data
+     * @param json
+     *            the JSON-encoded data
+     * @param charset
+     *            the charset of the data
+     * 
      * @return an input stream that strips comments from json data provided as an input stream.
+     * 
+     * @deprecated This ignores the charset and uses UTf-8. Use {@link #stripComments(InputStream)} instead.
      */
+    @Deprecated
     public static InputStream stripComments(InputStream json, Charset charset) {
         Reader rdr = stripComments(new InputStreamReader(json, Charset.forName("UTF-8")));
         return new ReaderInputStream(rdr, charset);
     }
 
     /**
-     * @param json the JSON-encoded data
+     * Strips comments from the json in the inputstream. Assumes UTF-8 encoding.
+     *
+     * @param json
+     *            the JSON-encoded data
+     * 
+     * @return a reader that strips comments from json data provided as an input stream.
+     */
+    public static Reader stripComments(InputStream json) {
+        return stripComments(new InputStreamReader(json, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * @param json
+     *            the JSON-encoded data
+     * 
      * @return a String with comments stripped from the provided json data.
      */
     public static String stripComments(String json) {
@@ -79,13 +214,15 @@ public final class JSONUtil {
                 return bld.toString();
             }
         } catch (IOException e) {
-            //doesn't happen with strings
+            // doesn't happen with strings
             throw new AssertionError("IOException in StringReader? I thought that was impossible!", e);
         }
     }
 
     /**
-     * @param json the JSON-encoded data
+     * @param json
+     *            the JSON-encoded data
+     * 
      * @return a reader that strips comments from json data provided as a reader.
      */
     public static Reader stripComments(final Reader json) {
@@ -108,7 +245,7 @@ public final class JSONUtil {
                             break;
                         case '"':
                             state = State.IN_STRING;
-                            //intentional fallthrough
+                            // intentional fallthrough
                         default:
                             if (lastChar != -1) {
                                 lastChar = -1;
@@ -141,7 +278,8 @@ public final class JSONUtil {
                             lastChar = -1;
                             cont = false;
                             break;
-                        default: break;
+                        default:
+                            break;
                         }
                         break;
                     case MULTI_LINE:
@@ -185,14 +323,16 @@ public final class JSONUtil {
                         int ci = json.read();
 
                         if (ci == -1) {
-                            //the end of input.. emit something if we're in an emittable state..
+                            // the end of input.. emit something if we're in an emittable state..
                             lastChar = -1;
 
                             switch (state) {
-                                case SINGLE_LINE: case MULTI_LINE: case STAR_IN_MULTI_LINE:
-                                    return -1;
-                                default:
-                                    return emit;
+                            case SINGLE_LINE:
+                            case MULTI_LINE:
+                            case STAR_IN_MULTI_LINE:
+                                return -1;
+                            default:
+                                return emit;
                             }
                         }
 
@@ -228,10 +368,12 @@ public final class JSONUtil {
     /**
      * Converts the provided javascript object to JSON string.
      *
-     * <p>If the object is a Map instance, it is stringified as key-value pairs, if it is a list, it is stringified as
-     * a list, otherwise the object is merely converted to string using the {@code toString()} method.
+     * <p>
+     * If the object is a Map instance, it is stringified as key-value pairs, if it is a list, it is stringified as a
+     * list, otherwise the object is merely converted to string using the {@code toString()} method.
      *
-     * @param object the object to stringify.
+     * @param object
+     *            the object to stringify.
      *
      * @return the object as a JSON string
      */
@@ -249,7 +391,7 @@ public final class JSONUtil {
             for (Map.Entry<?, ?> e : ((Map<?, ?>) object).entrySet()) {
                 String key = e.getKey().toString();
                 try {
-                    //noinspection ResultOfMethodCallIgnored
+                    // noinspection ResultOfMethodCallIgnored
                     int idx = Integer.parseInt(key);
                     if (!ret.has(0)) {
                         boolean isMap = false;

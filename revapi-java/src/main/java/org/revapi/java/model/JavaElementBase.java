@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +16,9 @@
  */
 package org.revapi.java.model;
 
-import java.util.SortedSet;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -33,6 +35,7 @@ import org.revapi.java.spi.Util;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public abstract class JavaElementBase<E extends Element, T extends TypeMirror> extends AbstractJavaElement
@@ -43,22 +46,26 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
     private String comparableSignature;
     private boolean inherited = false;
     private String stringRepre;
+    private Map<Class<?>, Map<String, Object>> childrenByTypeAndSignature;
 
     JavaElementBase(ProbingEnvironment env, Archive archive, E element, T representation) {
         super(env);
         this.element = element;
-        this.archive = archive;
+        setArchive(archive);
         this.representation = representation;
     }
 
     @Nonnull
     protected abstract String getHumanReadableElementType();
 
-    @Nullable @Override public JavaModelElement getParent() {
+    @Nullable
+    @Override
+    public JavaModelElement getParent() {
         return (JavaModelElement) super.getParent();
     }
 
-    @Override public void setParent(@Nullable org.revapi.Element parent) {
+    @Override
+    public void setParent(@Nullable JavaElement parent) {
         if (parent != null && !(parent instanceof JavaModelElement)) {
             throw new IllegalArgumentException("A parent must be a java model element.");
         }
@@ -72,7 +79,7 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
     }
 
     @Override
-    public int compareTo(@Nonnull org.revapi.Element o) {
+    public int compareTo(@Nonnull JavaElement o) {
         if (getClass() != o.getClass()) {
             return JavaElementFactory.compareByType(this, o);
         }
@@ -84,18 +91,13 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
         return element;
     }
 
-    @Override public T getModelRepresentation() {
+    @Override
+    public T getModelRepresentation() {
         return representation;
     }
 
-    @Nonnull
     @Override
-    @SuppressWarnings("unchecked")
-    public SortedSet<JavaElement> getChildren() {
-        return (SortedSet<JavaElement>) super.getChildren();
-    }
-
-    @Override public boolean isInherited() {
+    public boolean isInherited() {
         return inherited;
     }
 
@@ -122,11 +124,7 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
     protected String createFullHumanReadableString() {
         String decl = Util.toHumanReadableString(getDeclaringElement());
         if (isInherited()) {
-            org.revapi.Element parent = getParent();
-            while (parent != null && !(parent instanceof JavaTypeElement)) {
-                parent = parent.getParent();
-            }
-            JavaTypeElement parentType = (JavaTypeElement) parent;
+            JavaTypeElement parentType = getParentType();
 
             if (parentType != null) {
                 decl += " @ " + Util.toHumanReadableString(parentType.getDeclaringElement());
@@ -137,7 +135,7 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
 
     @Override
     public int hashCode() {
-        return getFullHumanReadableString().hashCode();
+        return getDeclaringElement().hashCode() * getModelRepresentation().hashCode();
     }
 
     @Override
@@ -146,8 +144,8 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
             return true;
         }
 
-        return obj != null && obj instanceof JavaElementBase &&
-            getFullHumanReadableString().equals(((JavaElementBase<?, ?>) obj).getFullHumanReadableString());
+        return obj instanceof JavaElementBase
+                && getFullHumanReadableString().equals(((JavaElementBase<?, ?>) obj).getFullHumanReadableString());
     }
 
     @Override
@@ -161,6 +159,42 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
         return (JavaElementBase<E, T>) super.clone();
     }
 
+    /**
+     * Clones this element and tries to add it under the new parent. If the parent already contains an element
+     * equivalent to this one, the returned optional is empty, otherwise it contains the clone.
+     *
+     * @param newParent
+     *            the parent to add the clone to
+     * 
+     * @return optional with the clone or an empty optional if the new parent already contains an equivalent element
+     */
+    public Optional<JavaElementBase<E, T>> cloneUnder(JavaElementBase<?, ?> newParent) {
+        JavaElementBase<E, T> copy = clone();
+        if (newParent.getChildren().add(copy)) {
+            return Optional.of(copy);
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    @Nullable
+    public <X extends JavaElementBase<?, ?>> X lookupChildElement(Class<X> childType, String comparableSignature) {
+        if (!environment.isScanningComplete()) {
+            return null;
+        }
+
+        if (childrenByTypeAndSignature == null) {
+            childrenByTypeAndSignature = buildChildrenByTypeAndSignature();
+        }
+
+        Map<String, Object> children = childrenByTypeAndSignature.get(childType);
+        if (children == null) {
+            return null;
+        }
+
+        return childType.cast(children.get(comparableSignature));
+    }
+
     protected String getComparableSignature() {
         if (comparableSignature == null) {
             comparableSignature = createComparableSignature();
@@ -170,4 +204,20 @@ public abstract class JavaElementBase<E extends Element, T extends TypeMirror> e
     }
 
     protected abstract String createComparableSignature();
+
+    private Map<Class<?>, Map<String, Object>> buildChildrenByTypeAndSignature() {
+        Map<Class<?>, Map<String, Object>> ret = new HashMap<>();
+
+        for (JavaElement el : getChildren()) {
+            if (!(el instanceof JavaElementBase)) {
+                continue;
+            }
+
+            Class<?> type = el.getClass();
+            String sig = ((JavaElementBase<?, ?>) el).getComparableSignature();
+
+            ret.computeIfAbsent(type, __ -> new HashMap<>()).put(sig, el);
+        }
+        return ret;
+    }
 }

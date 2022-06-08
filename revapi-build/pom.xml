@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright 2014-2019 Lukas Krejci
+    Copyright 2014-2021 Lukas Krejci
     and other contributors as indicated by the @author tags.
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,77 +18,75 @@
 
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
     <parent>
-        <artifactId>revapi-parent</artifactId>
         <groupId>org.revapi</groupId>
-        <version>12-SNAPSHOT</version>
+        <artifactId>revapi-parent</artifactId>
+        <version>16-SNAPSHOT</version>
         <relativePath>../revapi-parent</relativePath>
     </parent>
-    <modelVersion>4.0.0</modelVersion>
-
-    <name>Revapi Build Parent</name>
-    <description>
-        This module is meant to serve as parent for other modules that actually contain code and
-        need to depend on other libraries.
-    </description>
-
     <artifactId>revapi-build</artifactId>
-    <version>39-SNAPSHOT</version>
+    <version>46-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <url>${web.url}</url>
-
+    <name>Revapi Build Parent</name>
+    <description>This module is meant to serve as parent for other modules that actually contain code and
+        need to depend on other libraries.</description>
+    <url>https://revapi.org</url>
+    <scm>
+        <connection>scm:git:git://github.com/revapi/revapi.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/revapi/revapi.git</developerConnection>
+        <tag>HEAD</tag>
+        <url>https://github.com/revapi/revapi</url>
+    </scm>
+    <distributionManagement>
+        <site>
+            <id>site</id>
+            <url>https://revapi.org</url>
+        </site>
+    </distributionManagement>
     <properties>
-        <self-api-check.maven-version>0.11.0</self-api-check.maven-version>
-        <self-api-check.java-extension-version>0.19.0</self-api-check.java-extension-version>
-
-        <version.ch.qos.logback>1.1.2</version.ch.qos.logback>
-        <version.com.google.code.findbugs>3.0.0</version.com.google.code.findbugs>
-        <version.junit>4.11</version.junit>
-        <version.org.revapi.revapi-site-shared>3</version.org.revapi.revapi-site-shared>
-        <version.org.slf4j>1.7.5</version.org.slf4j>
-
-        <version.revapi-build-support>5</version.revapi-build-support>
-
-        <version.pw.krejci.multi-release-jar-maven-plugin>0.1.4</version.pw.krejci.multi-release-jar-maven-plugin>
-
+        <antora-module.version>main</antora-module.version>
         <automatic.module.name>define this in child modules</automatic.module.name>
-
-	<!--
+        <!--
             Work around Intellij's lack for maven.compiler.release attribute
             See https://youtrack.jetbrains.com/issue/IDEA-173143
 	-->
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <self-api-check.java-extension-version>0.26.1</self-api-check.java-extension-version>
+        <self-api-check.maven-version>0.14.6</self-api-check.maven-version>
+        <version.ch.qos.logback>1.2.0</version.ch.qos.logback>
+        <version.com.google.code.findbugs>3.0.0</version.com.google.code.findbugs>
+        <version.org.junit>5.7.0</version.org.junit>
+        <version.org.mockito>3.2.4</version.org.mockito>
+        <version.org.slf4j>1.7.5</version.org.slf4j>
+        <version.revapi-build-support>9-SNAPSHOT</version.revapi-build-support>
     </properties>
-
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-classic</artifactId>
-                <version>${version.ch.qos.logback}</version>
-            </dependency>
-
             <dependency>
                 <groupId>com.google.code.findbugs</groupId>
                 <artifactId>annotations</artifactId>
                 <version>${version.com.google.code.findbugs}</version>
             </dependency>
-
             <dependency>
-                <groupId>junit</groupId>
-                <artifactId>junit</artifactId>
-                <version>${version.junit}</version>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${version.org.junit}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
-
             <dependency>
-                <groupId>org.revapi</groupId>
-                <artifactId>revapi-site-shared</artifactId>
-                <version>${version.org.revapi.revapi-site-shared}</version>
-                <type>zip</type>
-                <classifier>resources</classifier>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${version.ch.qos.logback}</version>
             </dependency>
-
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${version.org.mockito}</version>
+            </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
@@ -96,125 +94,56 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
     <dependencies>
-        <dependency>
-            <groupId>org.revapi</groupId>
-            <artifactId>revapi-site-shared</artifactId>
-            <classifier>resources</classifier>
-            <type>zip</type>
-            <scope>provided</scope>
-        </dependency>
-
         <dependency>
             <groupId>com.google.code.findbugs</groupId>
             <artifactId>annotations</artifactId>
             <scope>provided</scope>
         </dependency>
-
         <dependency>
-            <groupId>junit</groupId>
-            <artifactId>junit</artifactId>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.vintage</groupId>
+            <artifactId>junit-vintage-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
-
     <build>
-        <extensions>
-            <extension>
-                <groupId>pw.krejci</groupId>
-                <artifactId>multi-release-jar-maven-plugin</artifactId>
-                <version>${version.pw.krejci.multi-release-jar-maven-plugin}</version>
-            </extension>
-        </extensions>
-
         <plugins>
             <plugin>
-                <artifactId>maven-jar-plugin</artifactId>
-                <configuration>
-                    <archive>
-                        <manifestEntries>
-                            <Automatic-Module-Name>${automatic.module.name}</Automatic-Module-Name>
-                        </manifestEntries>
-                    </archive>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>pw.krejci</groupId>
-                <artifactId>multi-release-jar-maven-plugin</artifactId>
-                <version>${version.pw.krejci.multi-release-jar-maven-plugin}</version>
-                <configuration>
-                    <mainModuleInfo>9</mainModuleInfo>
-                </configuration>
-            </plugin>
-            <plugin>
-                <artifactId>maven-enforcer-plugin</artifactId>
+                <groupId>net.revelc.code.formatter</groupId>
+                <artifactId>formatter-maven-plugin</artifactId>
                 <executions>
                     <execution>
-                        <id>java-version-check</id>
+                        <phase>generate-sources</phase>
                         <goals>
-                            <goal>enforce</goal>
+                            <goal>format</goal>
                         </goals>
-                        <configuration>
-                            <rules>
-                                <requireJavaVersion>
-                                    <version>9</version>
-                                </requireJavaVersion>
-                            </rules>
-                        </configuration>
                     </execution>
                 </executions>
             </plugin>
-
             <plugin>
-                <artifactId>maven-site-plugin</artifactId>
-                <configuration>
-                    <relativizeDecorationLinks>false</relativizeDecorationLinks>
-                </configuration>
+                <groupId>net.revelc.code</groupId>
+                <artifactId>impsort-maven-plugin</artifactId>
                 <executions>
                     <execution>
-                        <id>attach-sitexml</id>
-                        <phase>package</phase>
-                        <goals><goal>attach-descriptor</goal></goals>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>unpack-site-shared</id>
+                        <phase>generate-sources</phase>
                         <goals>
-                            <goal>unpack-dependencies</goal>
+                            <goal>sort</goal>
                         </goals>
-                        <phase>site</phase>
-                        <configuration>
-                            <outputDirectory>${project.build.directory}/site/modules/${project.artifactId}</outputDirectory>
-                            <includeArtifactIds>revapi-site-shared</includeArtifactIds>
-                            <includeGroupIds>org.revapi</includeGroupIds>
-                            <includeClassifiers>resources</includeClassifiers>
-                            <includeTypes>zip</includeTypes>
-                            <excludeTransitive>true</excludeTransitive>
-                        </configuration>
                     </execution>
                 </executions>
-            </plugin>
-
-            <plugin>
-                <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <forkCount>2</forkCount>
-                    <reuseForks>true</reuseForks>
+                    <groups>java.,javax.,*</groups>
+                    <staticGroups>java,javax,*</staticGroups>
                 </configuration>
             </plugin>
-
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.2</version>
                 <executions>
                     <execution>
                         <id>prepare-unit-test</id>
@@ -237,11 +166,11 @@
                         </configuration>
                     </execution>
                     <execution>
-                      <id>report-unit-tests</id>
-                      <phase>test</phase>
-                      <goals>
-                          <goal>report</goal>
-                      </goals>
+                        <id>report-unit-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
                         <configuration>
                             <dataFile>${project.build.directory}/jacoco-ut.exec</dataFile>
                         </configuration>
@@ -258,10 +187,29 @@
                     </execution>
                 </executions>
             </plugin>
-
             <plugin>
                 <groupId>com.mycila</groupId>
                 <artifactId>license-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>format</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.mycila</groupId>
+                        <artifactId>license-maven-plugin-git</artifactId>
+                        <version>3.0</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.revapi</groupId>
+                        <artifactId>revapi-build-support</artifactId>
+                        <version>${version.revapi-build-support}</version>
+                    </dependency>
+                </dependencies>
                 <configuration>
                     <skip>true</skip>
                     <header>license-template.ftl</header>
@@ -278,28 +226,56 @@
                         <atom>XML_STYLE</atom>
                     </mapping>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.0.0</version>
                 <executions>
                     <execution>
+                        <id>set-metadata-in-antora</id>
+                        <phase>process-sources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <replaceregexp byline="true">
+                                    <regexp pattern="^version: .*"></regexp>
+                                    <substitution expression="version: ${antora-module.version}"></substitution>
+                                    <fileset dir="${basedir}">
+                                        <include name="src/site/antora.yml"></include>
+                                    </fileset>
+                                </replaceregexp>
+                                <replaceregexp byline="true">
+                                    <regexp pattern="^title: .*"></regexp>
+                                    <substitution expression="title: ${project.name}"></substitution>
+                                    <fileset dir="${basedir}">
+                                        <include name="src/site/antora.yml"></include>
+                                    </fileset>
+                                </replaceregexp>
+                                <replaceregexp byline="true">
+                                    <regexp pattern="^name: .*"></regexp>
+                                    <substitution expression="name: ${project.artifactId}"></substitution>
+                                    <fileset dir="${basedir}">
+                                        <include name="src/site/antora.yml"></include>
+                                    </fileset>
+                                </replaceregexp>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>verify</phase>
                         <goals>
                             <goal>check</goal>
                         </goals>
                     </execution>
                 </executions>
-                <dependencies>
-                    <dependency>
-                        <groupId>com.mycila</groupId>
-                        <artifactId>license-maven-plugin-git</artifactId>
-                        <version>3.0</version>
-                    </dependency>
-                    <dependency>
-                        <groupId>org.revapi</groupId>
-                        <artifactId>revapi-build-support</artifactId>
-                        <version>${version.revapi-build-support}</version>
-                    </dependency>
-                </dependencies>
-            </plugin>
-            <plugin>
-                <artifactId>maven-checkstyle-plugin</artifactId>
                 <dependencies>
                     <dependency>
                         <groupId>org.revapi</groupId>
@@ -313,36 +289,54 @@
                     <configLocation>checkstyle.xml</configLocation>
                     <suppressionsLocation>checkstyle-suppressions.xml</suppressionsLocation>
                 </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-enforcer-plugin</artifactId>
                 <executions>
                     <execution>
-                        <goals><goal>check</goal></goals>
-                        <phase>verify</phase>
+                        <id>java-version-check</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>9</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Automatic-Module-Name>${automatic.module.name}</Automatic-Module-Name>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <forkCount>2</forkCount>
+                    <reuseForks>true</reuseForks>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <configuration>
+                    <!-- these two properties should never be updated automatically. -->
+                    <excludeProperties>self-api-check.java-extension-version,self-api-check.maven-version</excludeProperties>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
-
     <reporting>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-project-info-reports-plugin</artifactId>
-                <version>2.7</version>
-                <reportSets>
-                    <reportSet>
-                        <reports>
-                            <report>index</report>
-                            <report>license</report>
-                            <report>mailing-list</report>
-                            <report>issue-tracking</report>
-                            <report>scm</report>
-                            <report>project-team</report>
-                            <report>cim</report>
-                        </reports>
-                    </reportSet>
-                </reportSets>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
@@ -353,17 +347,26 @@
                         </reports>
                     </reportSet>
                 </reportSets>
+                <configuration>
+                    <source>8</source>
+                </configuration>
             </plugin>
             <plugin>
-                <groupId>org.asciidoctor</groupId>
-                <artifactId>asciidoctor-maven-plugin</artifactId>
-                <configuration>
-                    <sourceHighlighter>highlightjs</sourceHighlighter>
-                    <attributes>
-                        <base_url>${web.url}</base_url>
-                        <scm>${project.scm.url}</scm>
-                    </attributes>
-                </configuration>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-project-info-reports-plugin</artifactId>
+                <reportSets>
+                    <reportSet>
+                        <reports>
+                            <report>index</report>
+                            <report>licenses</report>
+                            <report>mailing-lists</report>
+                            <report>issue-management</report>
+                            <report>scm</report>
+                            <report>team</report>
+                            <report>ci-management</report>
+                        </reports>
+                    </reportSet>
+                </reportSets>
             </plugin>
             <plugin>
                 <groupId>org.revapi</groupId>
@@ -390,10 +393,9 @@
             </plugin>
         </plugins>
     </reporting>
-
     <profiles>
         <profile>
-            <id>java9</id>
+            <id>set-compiler-release</id>
             <activation>
                 <jdk>[9,]</jdk>
             </activation>
@@ -424,11 +426,70 @@
             </build>
         </profile>
         <profile>
+            <id>compile-java9</id>
+            <activation>
+                <jdk>[9,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>java9</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <release>9</release>
+                                    <compileSourceRoots>
+                                        <compileSourceRoot>${project.basedir}/src/main/java-mr/9</compileSourceRoot>
+                                    </compileSourceRoots>
+                                    <multiReleaseOutput>true</multiReleaseOutput>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>compile-java11</id>
+            <activation>
+                <jdk>[11,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>java11</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <release>11</release>
+                                    <compileSourceRoots>
+                                        <compileSourceRoot>${project.basedir}/src/main/java-mr/11</compileSourceRoot>
+                                    </compileSourceRoots>
+                                    <multiReleaseOutput>true</multiReleaseOutput>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>api-check</id>
             <activation>
-		    <jdk>[,]</jdk>
+                <jdk>[,]</jdk>
             </activation>
-
             <build>
                 <plugins>
                     <plugin>
@@ -437,18 +498,25 @@
                         <executions>
                             <execution>
                                 <id>parse-version</id>
+                                <phase>validate</phase>
                                 <goals>
                                     <goal>parse-version</goal>
                                 </goals>
-                                <phase>validate</phase>
                             </execution>
                         </executions>
                     </plugin>
-
                     <plugin>
                         <groupId>org.revapi</groupId>
                         <artifactId>revapi-maven-plugin</artifactId>
                         <version>${self-api-check.maven-version}</version>
+                        <executions>
+                            <execution>
+                                <id>api-check</id>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
                         <dependencies>
                             <dependency>
                                 <groupId>org.revapi</groupId>
@@ -464,12 +532,77 @@
                                         <behavior>report</behavior>
                                     </missing-classes>
                                 </revapi.java>
-                                <revapi.semver.ignore>
+                                <revapi.versions>
                                     <enabled>true</enabled>
+                                    <!--
+                                    We want more strict versioning rules even in 0.x.y so that even here we have some
+                                    semblance of controlled progress.
+                                    -->
+                                    <semantic0>false</semantic0>
                                     <passThroughDifferences>
                                         <item>java.class.nonPublicPartOfAPI</item>
                                     </passThroughDifferences>
-                                </revapi.semver.ignore>
+                                    <versionIncreaseAllows>
+                                        <major>
+                                            <severity>BREAKING</severity>
+                                        </major>
+                                        <minor>
+                                            <severity>BREAKING</severity>
+                                        </minor>
+                                        <patch>
+                                            <severity>NON_BREAKING</severity>
+                                        </patch>
+                                    </versionIncreaseAllows>
+                                    <onAllowed>
+                                        <criticality>documented</criticality>
+                                    </onAllowed>
+                                </revapi.versions>
+                                <revapi.differences>
+                                    <ignore>true</ignore>
+                                    <differences>
+                                        <item>
+                                            <regex>true</regex>
+                                            <code>java.class.externalClassExposedInAPI</code>
+                                            <newArchive>org\.revapi:revapi:.*</newArchive>
+                                            <justification>Revapi sub-modules implement the Revapi API which makes them
+                                                expose
+                                                Revapi-specific classes usually. In our case this is generally OK
+                                                because
+                                                the modules are just Revapi extensions which are supposed to do that.</justification>
+                                        </item>
+                                        <item>
+                                            <regex>true</regex>
+                                            <code>java.class.externalClassExposedInAPI</code>
+                                            <newArchive>org\.jboss:jboss-dmr:.*</newArchive>
+                                            <justification>Revapi sub-modules implement the Revapi API which makes them
+                                                expose
+                                                Jboss DMR (which is part of our API). In our case this is generally OK
+                                                because the modules are just Revapi extensions which are supposed to do
+                                                that.</justification>
+                                        </item>
+                                        <item>
+                                            <regex>true</regex>
+                                            <code>java.class.nonPublicPartOfAPI</code>
+                                            <newArchive>com\.fasterxml\.jackson\.core:.*:.*</newArchive>
+                                            <justification>Revapi uses Jackson for representing the JSON
+                                                configuration.</justification>
+                                        </item>
+                                        <item>
+                                            <regex>true</regex>
+                                            <code>java.class.externalClassExposedInAPI</code>
+                                            <newArchive>com\.fasterxml\.jackson\.core:.*.*</newArchive>
+                                            <justification>Revapi uses Jackson for representing the JSON
+                                                configuration.</justification>
+                                        </item>
+                                        <item>
+                                            <code>java.annotation.removed</code>
+                                            <annotation>@javax.annotation.Nonnull</annotation>
+                                            <justification>The convention in the codebase is now that everything is
+                                                assumed non-null unless annotated @Nullable, so @NonNull doesn't make
+                                                sense anymore.</justification>
+                                        </item>
+                                    </differences>
+                                </revapi.differences>
                             </analysisConfiguration>
                             <analysisConfigurationFiles>
                                 <configurationFile>
@@ -481,29 +614,15 @@
                                 </configurationFile>
                             </analysisConfigurationFiles>
                         </configuration>
-                        <executions>
-                            <execution>
-                                <id>api-check</id>
-                                <goals><goal>check</goal></goals>
-                            </execution>
-                        </executions>
                     </plugin>
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <id>docs-release</id>
+            <properties>
+                <antora-module.version>${project.version}</antora-module.version>
+            </properties>
+        </profile>
     </profiles>
-
-    <distributionManagement>
-        <site>
-            <id>site</id>
-            <url>${web.repo}</url>
-        </site>
-    </distributionManagement>
-
-    <scm>
-        <connection>scm:git:git://github.com/revapi/revapi.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/revapi/revapi.git</developerConnection>
-        <url>https://github.com/revapi/revapi</url>
-        <tag>HEAD</tag>
-    </scm>
 </project>

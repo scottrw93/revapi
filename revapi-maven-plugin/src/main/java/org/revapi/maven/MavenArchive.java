@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@ import org.revapi.Archive;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 class MavenArchive implements Archive.Versioned {
@@ -35,6 +36,7 @@ class MavenArchive implements Archive.Versioned {
     private final File file;
     private final String gav;
     private final String version;
+    private final String ga;
 
     private MavenArchive(Artifact artifact) {
         if (artifact == null) {
@@ -48,6 +50,12 @@ class MavenArchive implements Archive.Versioned {
 
         this.gav = artifact.toString();
         this.version = artifact.getBaseVersion();
+
+        if (gav.endsWith(version)) {
+            ga = gav.substring(0, gav.length() - version.length() - 1);
+        } else {
+            ga = gav;
+        }
     }
 
     public static MavenArchive of(Artifact artifact) {
@@ -73,6 +81,11 @@ class MavenArchive implements Archive.Versioned {
     @Override
     public @Nonnull String getVersion() {
         return version;
+    }
+
+    @Override
+    public String getBaseName() {
+        return ga;
     }
 
     @Override

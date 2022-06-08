@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,35 +20,35 @@ import java.util.Collections;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import javax.annotation.Nonnull;
+
 import org.apache.maven.plugin.MojoExecutionException;
-import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
+import org.revapi.Report;
+import org.revapi.base.BaseReporter;
 import org.revapi.configuration.ValidationResult;
-import org.revapi.simple.SimpleReporter;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.4.0
  */
 @Mojo(name = "validate-configuration", defaultPhase = LifecyclePhase.VALIDATE, threadSafe = true)
 public class ValidateConfigurationMojo extends AbstractRevapiMojo {
 
     @Override
-    public void execute() throws MojoExecutionException, MojoFailureException {
-        Analyzer analyzer = prepareAnalyzer(project, ValidateReporter.class, Collections.emptyMap());
+    public void doExecute() throws MojoExecutionException {
+        Analyzer analyzer = prepareAnalyzer(project, PipelineConfigurationParser.parse(pipelineConfiguration),
+                ValidateReporter.class, Collections.emptyMap());
 
         try {
             if (analyzer != null) {
                 ValidationResult res = analyzer.validateConfiguration();
                 if (!res.isSuccessful()) {
-                    String errors = res.getErrors() == null
-                            ? ""
-                            : Stream.of(res.getErrors()).map(e -> e.message + " @ " + e.dataPath)
-                            .collect(Collectors.joining(", ", "Errors: ", ""));
-                    String missingSchemas = res.getMissingSchemas() == null
-                            ? ""
-                            : Stream.of(res.getMissingSchemas())
+                    String errors = res.getErrors() == null ? "" : Stream.of(res.getErrors())
+                            .map(e -> e.message + " @ " + e.dataPath).collect(Collectors.joining(", ", "Errors: ", ""));
+                    String missingSchemas = res.getMissingSchemas() == null ? "" : Stream.of(res.getMissingSchemas())
                             .collect(Collectors.joining(", ", "Missing schemas: ", ""));
                     throw new MojoExecutionException(
                             "Failed to validate configuration. " + errors + " " + missingSchemas);
@@ -61,10 +61,14 @@ public class ValidateConfigurationMojo extends AbstractRevapiMojo {
         }
     }
 
-    public static final class ValidateReporter extends SimpleReporter {
+    public static final class ValidateReporter extends BaseReporter {
         @Override
         public String getExtensionId() {
             return "revapi.maven.validate-configuration-mojo-reporter";
+        }
+
+        @Override
+        public void report(@Nonnull Report report) {
         }
     }
 }
