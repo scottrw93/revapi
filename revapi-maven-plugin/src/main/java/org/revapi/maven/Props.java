@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,10 @@
  * limitations under the License.
  */
 package org.revapi.maven;
+
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.6.0
  */
 final class Props {
@@ -31,6 +33,7 @@ final class Props {
         static final String NAME = "";
         static final String DEFAULT_VALUE = "";
     }
+
     static final class analysisConfigurationFiles {
         static final String NAME = PREFIX + "analysisConfigurationFiles";
         static final String DEFAULT_VALUE = "";
@@ -156,8 +159,56 @@ final class Props {
         static final String DEFAULT_VALUE = "true";
     }
 
+    static final class ignoreSuggestionsFormat {
+        static final String NAME = PREFIX + "ignoreSuggestionsFormat";
+        static final String DEFAULT_VALUE = "json";
+    }
+
     static final class outputNonIdentifyingDifferenceInfo {
         static final String NAME = PREFIX + "outputNonIdentifyingDifferenceInfo";
         static final String DEFAULT_VALUE = "true";
+    }
+
+    static final class forceVersionUpdate {
+        static final String NAME = PREFIX + "forceVersionUpdate";
+        static final String DEFAULT_VALUE = "false";
+    }
+
+    static final class expandProperties {
+        static final String NAME = PREFIX + "expandProperties";
+        static final String DEFAULT_VALUE = "false";
+    }
+
+    static final class ignoreSuggestionsFile {
+        static final String NAME = PREFIX + "ignoreSuggestionsFile";
+        static final String DEFAULT_VALUE = "";
+    }
+
+    static final class failCriticality {
+        static final String NAME = PREFIX + "maximumCriticality";
+    }
+
+    static final class reportCriticality {
+        static final String NAME = PREFIX + "minimumCriticality";
+    }
+
+    static final class preserveNewerVersion {
+        static final String NAME = PREFIX + "preserveNewerVersion";
+        static final String DEFAULT_VALUE = "true";
+    }
+
+    static final class promotedDependencies {
+        static final String NAME = "";
+        static final String DEFAULT_VALUE = "";
+    }
+
+    static final class oldPromotedDependencies {
+        static final String NAME = "";
+        static final String DEFAULT_VALUE = "";
+    }
+
+    static final class newPromotedDependencies {
+        static final String NAME = "";
+        static final String DEFAULT_VALUE = "";
     }
 }

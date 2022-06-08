@@ -1,0 +1,52 @@
+= Building
+
+Revapi is a mavenized project so to download it and build it you merely 
+need to call
+
+ git clone https://github.com/revapi/revapi.git
+ cd revapi
+ mvn install
+
+== Building the site
+
+[source,shell]
+----
+./etc/release/site.sh <list-of-modules>
+----
+
+This will build the site for all the modules specified + also for the modules that are dependent on the specified ones. The site will be pushed into a `staging` branch of the
+site repository.
+
+To make the site public, you additionally need to:
+
+[source,shell]
+----
+cd revapi-site-assembly/build/site
+git checkout master
+git pull origin staging
+git push
+----
+
+== Releasing
+
+There is a release script that automatically releases all dependent modules along with
+the modules specified.
+
+[source,shell]
+----
+./etc/release/code.sh <list-of-modules>
+----
+
+where `<list-of-modules>` is a space-separated list of the names of the module directories.
+
+This will deploy all the modules that were either specified on the command line or that
+are dependent on the specified modules to Maven Central staging repository.
+
+To finish the release, do the following:
+
+. Go to https://oss.sonatype.org, log in and check that the artifacts are ready to be published.
+
+. Release the artifacts from https://oss.sonatype.org.
+
+. Many of the modules contain parts of the site specific to them. These are published as part of the release process
+  automatically. To make the staged site changes public:

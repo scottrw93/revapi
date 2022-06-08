@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,10 @@ package org.revapi.simple;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -27,14 +29,21 @@ import javax.annotation.Nullable;
 import org.revapi.API;
 import org.revapi.Element;
 import org.revapi.ElementForest;
+import org.revapi.FilterFinishResult;
+import org.revapi.FilterStartResult;
+import org.revapi.TreeFilter;
 import org.revapi.query.Filter;
 
 /**
  * A simple element forest of {@link org.revapi.simple.SimpleElement}s.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
+ * 
+ * @deprecated use {@link org.revapi.base.BaseElementForest} instead
  */
+@Deprecated
 public class SimpleElementForest implements ElementForest {
     private SortedSet<? extends SimpleElement> roots;
     private final API api;
@@ -53,24 +62,18 @@ public class SimpleElementForest implements ElementForest {
     @Nonnull
     public SortedSet<? extends SimpleElement> getRoots() {
         if (roots == null) {
-            roots = new TreeSet<>();
+            roots = newRootsInstance();
         }
         return roots;
     }
 
     @Override
-    @Nonnull
-    public <T extends Element> List<T> search(@Nonnull Class<T> resultType, boolean recurse,
-        @Nullable Filter<? super T> filter,
-        @Nullable Element root) {
-
-        List<T> results = new ArrayList<>();
-        search(results, resultType, root == null ? getRoots() : root.getChildren(), recurse, filter);
-        return results;
+    public Stream stream(Class resultType, boolean recurse, TreeFilter filter, @Nullable Element root) {
+        return search(resultType, recurse, filter, root).stream();
     }
 
     public <T extends Element> void search(@Nonnull List<T> results, @Nonnull Class<T> resultType,
-        @Nonnull SortedSet<? extends Element> currentLevel, boolean recurse, @Nullable Filter<? super T> filter) {
+            @Nonnull SortedSet<? extends Element> currentLevel, boolean recurse, @Nullable Filter<? super T> filter) {
 
         for (Element e : currentLevel) {
             if (resultType.isAssignableFrom(e.getClass())) {
@@ -88,6 +91,56 @@ public class SimpleElementForest implements ElementForest {
         }
     }
 
+    public <T extends Element> List<T> search(Class<T> resultType, boolean recurse, TreeFilter filter, Element root) {
+        List<T> results = new ArrayList<>();
+        search(results, resultType, root == null ? getRoots() : root.getChildren(), recurse, filter);
+        return results;
+    }
+
+    public <T extends Element> void search(List<T> results, Class<T> resultType,
+            SortedSet<? extends Element> currentLevel, boolean recurse, TreeFilter filter) {
+        search(results, resultType, currentLevel, recurse, filter, true);
+    }
+
+    @SuppressWarnings({ "SuspiciousMethodCalls" })
+    private <T extends Element> void search(List<T> results, Class<T> resultType,
+            SortedSet<? extends Element> currentLevel, boolean recurse, TreeFilter filter, boolean topLevel) {
+        for (Element e : currentLevel) {
+            FilterStartResult res;
+            if (filter == null) {
+                res = FilterStartResult.matchAndDescend();
+            } else {
+                res = filter.start(e);
+            }
+
+            boolean added = res.getMatch().toBoolean(true);
+
+            if (added) {
+                results.add(resultType.cast(e));
+            }
+
+            if (recurse && res.getDescend().toBoolean(true)) {
+                search(results, resultType, e.getChildren(), true, filter, false);
+            }
+
+            if (filter != null) {
+                FilterFinishResult finalMatch = filter.finish(e);
+                if (!added && finalMatch.getMatch().toBoolean(true)) {
+                    results.add(resultType.cast(e));
+                }
+            }
+        }
+
+        if (topLevel && filter != null) {
+            Map<Element, FilterFinishResult> matches = filter.finish();
+            for (Map.Entry<Element, FilterFinishResult> e : matches.entrySet()) {
+                if (e.getValue().getMatch().toBoolean(true) && !results.contains(e.getKey())) {
+                    results.add(resultType.cast(e.getKey()));
+                }
+            }
+        }
+    }
+
     @Override
     public String toString() {
         StringBuilder bld = new StringBuilder(getClass().getSimpleName());
@@ -95,6 +148,10 @@ public class SimpleElementForest implements ElementForest {
         addToString(bld, 1, getRoots());
 
         return bld.toString();
+    }
+
+    protected SortedSet<? extends SimpleElement> newRootsInstance() {
+        return new TreeSet<>();
     }
 
     private void addToString(StringBuilder bld, int indent, SortedSet<? extends Element> elements) {

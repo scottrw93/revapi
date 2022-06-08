@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,13 +23,14 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
 import javax.lang.model.element.NestingKind;
 import javax.tools.SimpleJavaFileObject;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 final class ArchiveProbeObject extends SimpleJavaFileObject {
@@ -45,8 +46,8 @@ final class ArchiveProbeObject extends SimpleJavaFileObject {
         try {
             return new URI(CLASS_NAME + ".java");
         } catch (URISyntaxException e) {
-            //doesn't happen
-            return null;
+            // doesn't happen
+            throw new AssertionError("Could not create a URI for " + (CLASS_NAME + ".java"));
         }
     }
 
@@ -64,7 +65,7 @@ final class ArchiveProbeObject extends SimpleJavaFileObject {
     @Override
     public InputStream openInputStream() throws IOException {
         generateIfNeeded();
-        return new ByteArrayInputStream(source.getBytes(Charset.forName("UTF-8")));
+        return new ByteArrayInputStream(source.getBytes(StandardCharsets.UTF_8));
     }
 
     @Override
@@ -78,8 +79,8 @@ final class ArchiveProbeObject extends SimpleJavaFileObject {
             return;
         }
 
-        //notice that we don't actually need to generate any complicated code. Having the classes on the classpath
-        //is enough for them to be present in the model captured during the annotation processing.
+        // notice that we don't actually need to generate any complicated code. Having the classes on the classpath
+        // is enough for them to be present in the model captured during the annotation processing.
         source = "@" + MarkerAnnotationObject.CLASS_NAME + "\npublic class " + CLASS_NAME + "\n{}\n";
     }
 }

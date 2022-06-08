@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,7 @@ import org.revapi.java.spi.Util;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class ReturnTypeChanged extends CheckBase {
@@ -51,11 +52,23 @@ public final class ReturnTypeChanged extends CheckBase {
         assert oldMethod != null;
         assert newMethod != null;
 
-        String oldRet = Util.toUniqueString(oldMethod.getModelRepresentation().getReturnType());
-        String newRet = Util.toUniqueString(newMethod.getModelRepresentation().getReturnType());
+        TypeMirror oldReturnType = oldMethod.getModelRepresentation().getReturnType();
+        TypeMirror newReturnType = newMethod.getModelRepresentation().getReturnType();
 
-        if (!oldRet.equals(newRet)) {
-            pushActive(oldMethod, newMethod);
+        String oldRet = Util.toUniqueString(oldReturnType);
+        String newRet = Util.toUniqueString(newReturnType);
+
+        TypeMirror erasedOldType = getOldTypeEnvironment().getTypeUtils()
+                .erasure(oldMethod.getDeclaringElement().getReturnType());
+        TypeMirror erasedNewType = getNewTypeEnvironment().getTypeUtils()
+                .erasure(newMethod.getDeclaringElement().getReturnType());
+
+        String oldErasedRet = Util.toUniqueString(erasedOldType);
+        String newErasedRet = Util.toUniqueString(erasedNewType);
+
+        if (!oldRet.equals(newRet) || !oldErasedRet.equals(newErasedRet)) {
+            pushActive(oldMethod, newMethod, oldReturnType, oldRet, newReturnType, newRet, erasedOldType, oldErasedRet,
+                    erasedNewType, newErasedRet);
         }
     }
 
@@ -67,26 +80,33 @@ public final class ReturnTypeChanged extends CheckBase {
             return null;
         }
 
-        TypeMirror oldReturnType = methods.oldElement.getModelRepresentation().getReturnType();
-        TypeMirror newReturnType = methods.newElement.getModelRepresentation().getReturnType();
+        TypeMirror oldReturnType = (TypeMirror) methods.context[0];
+        String oldR = (String) methods.context[1];
 
-        TypeMirror erasedOldType = getOldTypeEnvironment().getTypeUtils().erasure(oldReturnType);
-        TypeMirror erasedNewType = getNewTypeEnvironment().getTypeUtils().erasure(newReturnType);
+        TypeMirror newReturnType = (TypeMirror) methods.context[2];
+        String newR = (String) methods.context[3];
 
-        String oldR = Util.toUniqueString(oldReturnType);
-        String newR = Util.toUniqueString(newReturnType);
+        TypeMirror erasedOldType = (TypeMirror) methods.context[4];
+        String oldER = (String) methods.context[5];
 
-        String oldER = Util.toUniqueString(erasedOldType);
-        String newER = Util.toUniqueString(erasedNewType);
+        TypeMirror erasedNewType = (TypeMirror) methods.context[6];
+        String newER = (String) methods.context[7];
 
         Code code = null;
 
+        String oldHR = Util.toHumanReadableString(oldReturnType);
+        String newHR = Util.toHumanReadableString(newReturnType);
+
         if (!oldER.equals(newER)) {
-            //we need to check if the returned type changed covariantly or not.
+            // we need to check if the returned type changed covariantly or not.
             if (isPrimitiveOrVoid(erasedOldType) || isPrimitiveOrVoid(erasedNewType)) {
                 code = Code.METHOD_RETURN_TYPE_CHANGED;
             } else if (isCovariant(erasedOldType, erasedNewType)) {
                 code = Code.METHOD_RETURN_TYPE_CHANGED_COVARIANTLY;
+            } else if (oldR.equals(newR)) {
+                oldHR = Util.toHumanReadableString(erasedOldType);
+                newHR = Util.toHumanReadableString(erasedNewType);
+                code = Code.METHOD_RETURN_TYPE_ERASURE_CHANGED;
             } else {
                 code = Code.METHOD_RETURN_TYPE_CHANGED;
             }
@@ -96,24 +116,19 @@ public final class ReturnTypeChanged extends CheckBase {
             }
         }
 
-        String oldHR = Util.toHumanReadableString(oldReturnType);
-        String newHR = Util.toHumanReadableString(newReturnType);
-
         return code == null ? null : Collections.singletonList(createDifference(code,
-                Code.attachmentsFor(methods.oldElement, methods.newElement,
-                        "oldType", oldHR,
-                        "newType", newHR)));
+                Code.attachmentsFor(methods.oldElement, methods.newElement, "oldType", oldHR, "newType", newHR)));
     }
 
     private static boolean isPrimitiveOrVoid(TypeMirror type) {
         TypeKind kind = type.getKind();
         switch (kind) {
-            case VOID:
-                return true;
-            case ARRAY:
-                return isPrimitiveOrVoid(((ArrayType) type).getComponentType());
-            default:
-                return kind.isPrimitive();
+        case VOID:
+            return true;
+        case ARRAY:
+            return isPrimitiveOrVoid(((ArrayType) type).getComponentType());
+        default:
+            return kind.isPrimitive();
         }
     }
 

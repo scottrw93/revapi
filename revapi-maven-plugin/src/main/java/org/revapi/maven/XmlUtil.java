@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,9 +24,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.codehaus.plexus.configuration.PlexusConfiguration;
+import org.codehaus.plexus.configuration.PlexusConfigurationException;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.9.0
  */
 final class XmlUtil {
@@ -63,7 +65,7 @@ final class XmlUtil {
                 }
 
                 if (nonWhitespaceIdx == -1) {
-                    //empty line...
+                    // empty line...
                     continue;
                 }
 
@@ -78,10 +80,9 @@ final class XmlUtil {
             }
         }
 
-        //indentation size of 2 by default, otherwise what's in the file
+        // indentation size of 2 by default, otherwise what's in the file
         return indentHist.isEmpty() ? 2 : indentHist.entrySet().stream()
-                .reduce(new SimpleEntry<>(0, 1), (a, b) -> a.getValue() > b.getValue() ? a : b)
-                .getKey();
+                .reduce(new SimpleEntry<>(0, 1), (a, b) -> a.getValue() > b.getValue() ? a : b).getKey();
     }
 
     static void toIndentedString(PlexusConfiguration xml, int indentationSize, int currentDepth, Writer wrt)
@@ -89,8 +90,15 @@ final class XmlUtil {
 
         indent(indentationSize, currentDepth, wrt);
 
+        String content;
+        try {
+            content = xml.getValue();
+        } catch (PlexusConfigurationException e) {
+            throw new IllegalStateException("Failed to read configuration", e);
+        }
+
         boolean hasChildren = xml.getChildCount() > 0;
-        boolean hasContent = xml.getValue() != null && !xml.getValue().isEmpty();
+        boolean hasContent = content != null && !content.isEmpty();
         wrt.write('<');
         wrt.write(xml.getName());
         if (!hasChildren && !hasContent) {
@@ -110,7 +118,7 @@ final class XmlUtil {
             }
 
             if (hasContent) {
-                wrt.write(xml.getValue());
+                escaped(wrt, content);
             }
 
             wrt.write("</");
@@ -126,4 +134,22 @@ final class XmlUtil {
         }
     }
 
+    private static void escaped(Writer wrt, String value) throws IOException {
+        for (int i = 0; i < value.length(); ++i) {
+            char c = value.charAt(i);
+            switch (c) {
+            case '&':
+                wrt.write("&amp;");
+                break;
+            case '<':
+                wrt.write("&lt;");
+                break;
+            case '>':
+                wrt.write("&gt;");
+                break;
+            default:
+                wrt.write(c);
+            }
+        }
+    }
 }

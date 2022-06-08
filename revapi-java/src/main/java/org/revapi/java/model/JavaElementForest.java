@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,25 +16,28 @@
  */
 package org.revapi.java.model;
 
-import java.util.List;
+import java.util.Iterator;
 import java.util.SortedSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.revapi.API;
 import org.revapi.Element;
+import org.revapi.base.BaseElementForest;
 import org.revapi.java.Timing;
+import org.revapi.java.spi.JavaElement;
 import org.revapi.query.Filter;
-import org.revapi.simple.SimpleElementForest;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
-public final class JavaElementForest extends SimpleElementForest {
+public final class JavaElementForest extends BaseElementForest<JavaElement> {
 
     private Future<?> compilation;
     private static final ThreadLocal<Boolean> UNSAFE_MODE = new ThreadLocal<Boolean>() {
@@ -52,50 +55,36 @@ public final class JavaElementForest extends SimpleElementForest {
         this.compilation = compilation;
     }
 
-    @Nonnull
     @Override
-    @SuppressWarnings("unchecked")
-    public SortedSet<TypeElement> getRoots() {
+    public SortedSet<JavaElement> getRoots() {
         waitForCompilation();
-        return (SortedSet<TypeElement>) super.getRoots();
+        return super.getRoots();
     }
 
-    @SuppressWarnings("unchecked")
-    public SortedSet<TypeElement> getRootsUnsafe() {
+    public SortedSet<JavaElement> getRootsUnsafe() {
         boolean wasUnsafe = UNSAFE_MODE.get();
         try {
             UNSAFE_MODE.set(true);
-            return (SortedSet<TypeElement>) super.getRoots();
+            return super.getRoots();
         } finally {
             UNSAFE_MODE.set(wasUnsafe);
         }
     }
 
+    @Nonnull
     @Override
-    public <T extends Element> void search(@Nonnull List<T> results, @Nonnull Class<T> resultType,
-        @Nonnull SortedSet<? extends Element> currentLevel, boolean recurse, @Nullable Filter<? super T> filter) {
+    public <T extends Element<T>> Iterator<T> iterateOverElements(@Nonnull Class<T> resultType, boolean recurse,
+            @Nullable Filter<? super T> filter, @Nullable Element<T> searchRoot) {
         waitForCompilation();
-        super.search(results, resultType, currentLevel, recurse, filter);
+        return super.iterateOverElements(resultType, recurse, filter, searchRoot);
     }
 
     @Nonnull
     @Override
-    public <T extends Element> List<T> search(@Nonnull Class<T> resultType, boolean recurse,
-        @Nullable Filter<? super T> filter,
-        @Nullable Element root) {
+    public <T extends Element<JavaElement>> Stream<T> stream(@Nonnull Class<T> resultType, boolean recurse,
+            @Nullable Element<JavaElement> searchRoot) {
         waitForCompilation();
-        return super.search(resultType, recurse, filter, root);
-    }
-
-    public <T extends Element> List<T> searchUnsafe(Class<T> resultType, boolean recurse, Filter<? super T> filter,
-        Element root) {
-        boolean wasUnsafe = UNSAFE_MODE.get();
-        try {
-            UNSAFE_MODE.set(true);
-            return super.search(resultType, recurse, filter, root);
-        } finally {
-            UNSAFE_MODE.set(wasUnsafe);
-        }
+        return super.stream(resultType, recurse, searchRoot);
     }
 
     @Override

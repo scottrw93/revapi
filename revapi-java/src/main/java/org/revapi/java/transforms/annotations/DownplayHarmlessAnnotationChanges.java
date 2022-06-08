@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,78 +29,84 @@ import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import org.jboss.dmr.ModelNode;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.revapi.AnalysisContext;
 import org.revapi.CompatibilityType;
 import org.revapi.Difference;
 import org.revapi.DifferenceSeverity;
 import org.revapi.DifferenceTransform;
+import org.revapi.TransformationResult;
 import org.revapi.java.spi.JavaModelElement;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.12.0
  */
 public final class DownplayHarmlessAnnotationChanges implements DifferenceTransform<JavaModelElement> {
     private boolean skip = false;
 
-    private static final Set<String> HARMLESS_ANNOTATIONS = new HashSet<>(Arrays.asList(
-            "java.lang.FunctionalInterface", //having this is purely informational
-            "java.lang.annotation.Documented", //this doesn't affect the runtime at any rate
-            "jdk.internal.HotSpotIntrinsicCandidate" //
-    ));
+    private static final Set<String> HARMLESS_ANNOTATIONS = new HashSet<>(
+            Arrays.asList("java.lang.FunctionalInterface", "java.lang.annotation.Documented",
+                    "jdk.internal.HotSpotIntrinsicCandidate", "jdk.internal.vm.annotation.IntrinsicCandidate"));
 
-    @Nonnull @Override public Pattern[] getDifferenceCodePatterns() {
-        return new Pattern[] {exact("java.annotation.added"), exact("java.annotation.removed"),
+    @Nonnull
+    @Override
+    public Pattern[] getDifferenceCodePatterns() {
+        return new Pattern[] { exact("java.annotation.added"), exact("java.annotation.removed"),
                 exact("java.annotation.attributeValueChanged"), exact("java.annotation.attributeAdded"),
-                exact("java.annotation.attributeRemoved")};
+                exact("java.annotation.attributeRemoved") };
     }
 
-    @Nullable @Override
-    public Difference transform(@Nullable JavaModelElement oldElement, @Nullable JavaModelElement newElement,
-                                @Nonnull Difference difference) {
+    @Override
+    public TransformationResult tryTransform(@Nullable JavaModelElement oldElement,
+            @Nullable JavaModelElement newElement, Difference difference) {
         if (skip) {
-            return difference;
+            return TransformationResult.keep();
         }
 
         String annotationType = difference.attachments.get("annotationType");
         if (annotationType == null) {
-            return difference;
+            return TransformationResult.keep();
         }
 
         if (HARMLESS_ANNOTATIONS.contains(annotationType)) {
-            return new Difference(difference.code, difference.name, difference.description,
-                    reclassify(difference.classification), difference.attachments);
+            return TransformationResult.replaceWith(Difference.copy(difference).clearClassifications()
+                    .addClassifications(reclassify(difference.classification)).build());
         } else {
-            return difference;
+            return TransformationResult.keep();
         }
     }
 
-    @Override public void close() throws Exception {
+    @Override
+    public void close() throws Exception {
     }
 
-    @Nullable @Override public String getExtensionId() {
+    @Nullable
+    @Override
+    public String getExtensionId() {
         return "revapi.java.downplayHarmlessAnnotationChanges";
     }
 
-    @Nullable @Override public Reader getJSONSchema() {
+    @Nullable
+    @Override
+    public Reader getJSONSchema() {
         return new StringReader("{\"type\": \"boolean\"}");
     }
 
-    @Override public void initialize(@Nonnull AnalysisContext analysisContext) {
-        ModelNode conf = analysisContext.getConfiguration()
-                .get("downplayHarmlessAnnotationChanges");
+    @Override
+    public void initialize(@Nonnull AnalysisContext analysisContext) {
+        JsonNode conf = analysisContext.getConfigurationNode().path("downplayHarmlessAnnotationChanges");
 
-        if (conf.isDefined()) {
-            skip = !conf.asBoolean();
-        }
+        skip = !conf.asBoolean(true);
     }
 
     private static Pattern exact(String string) {
         return Pattern.compile("^" + Pattern.quote(string) + "$");
     }
 
-    private static Map<CompatibilityType, DifferenceSeverity> reclassify(Map<CompatibilityType, DifferenceSeverity> orig) {
+    private static Map<CompatibilityType, DifferenceSeverity> reclassify(
+            Map<CompatibilityType, DifferenceSeverity> orig) {
         return orig.keySet().stream()
                 .collect(Collectors.toMap(Function.identity(), v -> DifferenceSeverity.EQUIVALENT));
     }

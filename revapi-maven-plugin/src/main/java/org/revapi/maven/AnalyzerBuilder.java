@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,15 +34,18 @@ import org.eclipse.aether.artifact.Artifact;
 import org.revapi.ApiAnalyzer;
 import org.revapi.DifferenceTransform;
 import org.revapi.ElementFilter;
+import org.revapi.ElementMatcher;
 import org.revapi.PipelineConfiguration;
 import org.revapi.Reporter;
 import org.revapi.Revapi;
 import org.revapi.ServiceTypeLoader;
+import org.revapi.TreeFilterProvider;
 
 /**
  * Common {@link Analyzer} instantiation logic for mojos.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.8.0
  */
 class AnalyzerBuilder {
@@ -59,7 +62,7 @@ class AnalyzerBuilder {
     private String newVersion;
     private String disallowedExtensions;
     private Class<? extends Reporter> reporterType;
-    private PlexusConfiguration pipelineConfiguration;
+    private PipelineConfiguration.Builder pipelineConfiguration;
     private PlexusConfiguration analysisConfiguration;
     private Object[] analysisConfigurationFiles;
     private RepositorySystem repositorySystem;
@@ -71,9 +74,12 @@ class AnalyzerBuilder {
     private boolean checkDependencies;
     private boolean resolveProvidedDependencies;
     private boolean resolveTransitiveProvidedDependencies;
+    private boolean expandProperties;
     private String versionFormat;
     private Revapi revapi;
     private Map<String, Object> contextData = new HashMap<>(2);
+    private PromotedDependency[] oldPromotedDependencies;
+    private PromotedDependency[] newPromotedDependencies;
 
     static AnalyzerBuilder forGavs(String[] oldGavs, String[] newGavs) {
         return new AnalyzerBuilder(oldGavs, newGavs, null, null);
@@ -125,7 +131,7 @@ class AnalyzerBuilder {
         return this;
     }
 
-    AnalyzerBuilder withPipelineConfiguration(PlexusConfiguration pipelineConfiguration) {
+    AnalyzerBuilder withPipelineConfiguration(PipelineConfiguration.Builder pipelineConfiguration) {
         this.pipelineConfiguration = pipelineConfiguration;
         return this;
     }
@@ -185,6 +191,11 @@ class AnalyzerBuilder {
         return this;
     }
 
+    AnalyzerBuilder withExpandProperties(boolean expandProperties) {
+        this.expandProperties = expandProperties;
+        return this;
+    }
+
     AnalyzerBuilder withVersionFormat(String versionFormat) {
         this.versionFormat = versionFormat;
         return this;
@@ -204,6 +215,16 @@ class AnalyzerBuilder {
         if (contextData != null) {
             this.contextData.putAll(contextData);
         }
+        return this;
+    }
+
+    AnalyzerBuilder withOldPromotedDependencies(PromotedDependency[] oldApiDependencies) {
+        this.oldPromotedDependencies = oldApiDependencies;
+        return this;
+    }
+
+    AnalyzerBuilder withNewPromotedDependencies(PromotedDependency[] newApiDependencies) {
+        this.newPromotedDependencies = newApiDependencies;
         return this;
     }
 
@@ -227,20 +248,18 @@ class AnalyzerBuilder {
             return null;
         }
 
-
-        final List<String> disallowedExtensions = this.disallowedExtensions == null
-                ? Collections.emptyList()
+        final List<String> disallowedExtensions = this.disallowedExtensions == null ? Collections.emptyList()
                 : Arrays.asList(this.disallowedExtensions.split("\\s*,\\s*"));
 
-        Consumer<PipelineConfiguration.Builder> pipelineModifier =
-                applyDisallowedExtensionsToPipeline(disallowedExtensions);
+        Consumer<PipelineConfiguration.Builder> pipelineModifier = applyDisallowedExtensionsToPipeline(
+                disallowedExtensions);
 
         return new Analyzer(pipelineConfiguration, analysisConfiguration, analysisConfigurationFiles, oldArtifacts,
-                newArtifacts, oldGavs, newGavs, project, repositorySystem, repositorySystemSession, reporterType,
-                contextData, locale, log, failOnMissingConfigurationFiles, failOnUnresolvedArtifacts,
-                failOnUnresolvedDependencies, alwaysCheckForReleaseVersion, checkDependencies,
-                resolveProvidedDependencies, resolveTransitiveProvidedDependencies, versionFormat, pipelineModifier,
-                revapi);
+                newArtifacts, oldGavs, newGavs, oldPromotedDependencies, newPromotedDependencies, project,
+                repositorySystem, repositorySystemSession, reporterType, contextData, locale, log,
+                failOnMissingConfigurationFiles, failOnUnresolvedArtifacts, failOnUnresolvedDependencies,
+                alwaysCheckForReleaseVersion, checkDependencies, resolveProvidedDependencies,
+                resolveTransitiveProvidedDependencies, expandProperties, versionFormat, pipelineModifier, revapi);
     }
 
     private void initializeComparisonArtifacts() {
@@ -251,50 +270,51 @@ class AnalyzerBuilder {
 
     private void initializeComparisonGavs() {
         if (newGavs != null && newGavs.length == 1 && "BUILD".equals(newGavs[0])) {
-            log.warn("\"BUILD\" coordinates are deprecated. Just leave \"newArtifacts\" undefined and specify" +
-                    " \"${project.version}\" as the value for \"newVersion\" (which is the default, so you don't" +
-                    " actually have to do that either).");
+            log.warn("\"BUILD\" coordinates are deprecated. Just leave \"newArtifacts\" undefined and specify"
+                    + " \"${project.version}\" as the value for \"newVersion\" (which is the default, so you don't"
+                    + " actually have to do that either).");
             oldGavs = null;
         }
 
         if (oldGavs == null || oldGavs.length == 0) {
-            //non-intuitively, we need to initialize the artifacts even if we will not proceed with the analysis itself
-            //that's because we need know the versions when figuring out the version modifications -
-            //see AbstractVersionModifyingMojo
-            oldGavs = new String[]{
-                    Analyzer.getProjectArtifactCoordinates(project, oldVersion)};
+            // non-intuitively, we need to initialize the artifacts even if we will not proceed with the analysis itself
+            // that's because we need know the versions when figuring out the version modifications -
+            // see AbstractVersionModifyingMojo
+            oldGavs = new String[] { Analyzer.getProjectArtifactCoordinates(project, oldVersion) };
         }
 
         if (newGavs == null || newGavs.length == 0) {
-            newGavs = new String[]{
-                    Analyzer.getProjectArtifactCoordinates(project, newVersion)};
+            newGavs = new String[] { Analyzer.getProjectArtifactCoordinates(project, newVersion) };
         }
-   }
+    }
 
-    private static Consumer<PipelineConfiguration.Builder>
-    applyDisallowedExtensionsToPipeline(List<String> disallowedExtensions) {
+    private static Consumer<PipelineConfiguration.Builder> applyDisallowedExtensionsToPipeline(
+            List<String> disallowedExtensions) {
         return (bld) -> {
             List<Class<? extends ApiAnalyzer>> analyzers = new ArrayList<>();
-            List<Class<? extends ElementFilter>> filters = new ArrayList<>();
+            List<Class<? extends TreeFilterProvider>> filters = new ArrayList<>();
             List<Class<? extends DifferenceTransform>> transforms = new ArrayList<>();
             List<Class<? extends Reporter>> reporters = new ArrayList<>();
+            List<Class<? extends ElementFilter>> legacyFilters = new ArrayList<>();
+            List<Class<? extends ElementMatcher>> matchers = new ArrayList<>();
 
             addAllAllowed(analyzers, ServiceTypeLoader.load(ApiAnalyzer.class), disallowedExtensions);
-            addAllAllowed(filters, ServiceTypeLoader.load(ElementFilter.class), disallowedExtensions);
+            addAllAllowed(filters, ServiceTypeLoader.load(TreeFilterProvider.class), disallowedExtensions);
             addAllAllowed(transforms, ServiceTypeLoader.load(DifferenceTransform.class), disallowedExtensions);
             addAllAllowed(reporters, ServiceTypeLoader.load(Reporter.class), disallowedExtensions);
+            addAllAllowed(legacyFilters, ServiceTypeLoader.load(ElementFilter.class), disallowedExtensions);
+            addAllAllowed(matchers, ServiceTypeLoader.load(ElementMatcher.class), disallowedExtensions);
 
-            @SuppressWarnings("unchecked")
-            List<Class<? extends DifferenceTransform<?>>> castTransforms =
-                    (List<Class<? extends DifferenceTransform<?>>>) (List) transforms;
+            filters.addAll(legacyFilters);
 
-            bld.withAnalyzers(analyzers).withFilters(filters).withTransforms(castTransforms).withReporters(reporters);
+            bld.withAnalyzers(analyzers).withFilters(filters).withTransforms(transforms).withReporters(reporters)
+                    .withMatchers(matchers);
         };
     }
 
     @SuppressWarnings("unchecked")
     private static <T> void addAllAllowed(List<Class<? extends T>> list, Iterable<Class<? extends T>> candidates,
-                                          List<String> disallowedClassNames) {
+            List<String> disallowedClassNames) {
         for (Class<? extends T> c : candidates) {
             if (c != null && !disallowedClassNames.contains(c.getName())) {
                 list.add(c);
@@ -308,6 +328,7 @@ class AnalyzerBuilder {
         String[] newArtifacts;
         Analyzer analyzer;
 
-        private Result() {}
+        private Result() {
+        }
     }
 }

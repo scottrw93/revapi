@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,10 +16,13 @@
  */
 package org.revapi.maven;
 
+import java.util.Arrays;
+
 /**
  * A complex type for capturing the "analysisConfigurationFiles" elements.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.2.0
  */
 public final class ConfigurationFile {
@@ -50,5 +53,11 @@ public final class ConfigurationFile {
 
     public void setRoots(String[] roots) {
         this.roots = roots;
+    }
+
+    @Override
+    public String toString() {
+        return "ConfigurationFile{" + "path='" + path + '\'' + ", resource='" + resource + '\'' + ", roots="
+                + Arrays.toString(roots) + '}';
     }
 }

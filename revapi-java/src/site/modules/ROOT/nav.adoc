@@ -1,0 +1,6 @@
+* xref:differences.adoc[]
+* xref:configuration.adoc[]
+* xref:annotation-based-filter.adoc[]
+* xref:non-jar-archives.adoc[]
+* xref:element-matching.adoc[]
+* link:{attachmentsdir}/apidocs/index.html[Javadoc]

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,20 +16,23 @@
  */
 package org.revapi.java.spi;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-import javax.lang.model.type.DeclaredType;
+import java.util.Set;
+
+import javax.lang.model.element.Modifier;
+
+import org.revapi.Reference;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
-public final class UseSite {
+public final class UseSite extends Reference<JavaElement> {
 
     /**
      * The way the used class is used by the use site.
      */
-    public enum Type {
+    public enum Type implements Reference.Type<JavaElement> {
         /**
          * The used class annotates the use site.
          */
@@ -56,14 +59,12 @@ public final class UseSite {
         RETURN_TYPE,
 
         /**
-         * One of the parameters of the use site (method) has the type
-         * of the used class.
+         * One of the parameters of the use site (method) has the type of the used class.
          */
         PARAMETER_TYPE,
 
         /**
-         * The use site (method) throws exceptions of the type of the used
-         * class.
+         * The use site (method) throws exceptions of the type of the used class.
          */
         IS_THROWN,
 
@@ -73,102 +74,99 @@ public final class UseSite {
         CONTAINS,
 
         /**
-         * The used class is used as a type parameter or a bound of a type variable or wildcard on the use site
-         * (which can be a class, field, method or a method parameter).
+         * The used class is used as a type parameter or a bound of a type variable or wildcard on the use site (which
+         * can be a class, field, method or a method parameter).
          */
         TYPE_PARAMETER_OR_BOUND;
 
         /**
-         * @return true if this type of use makes the used type part of the API even if it wasn't originally part
-         * of it.
+         * Consider using {@link UseSite#isMovingToApi()}, if possible.
+         *
+         * @return true if this type of use makes the used type part of the API even if it wasn't originally part of it.
          */
         public boolean isMovingToApi() {
             switch (this) {
-                case ANNOTATES: case CONTAINS: case IS_INHERITED: case IS_IMPLEMENTED:
-                    return false;
-                default:
-                    return true;
+            case ANNOTATES:
+            case CONTAINS:
+            case IS_INHERITED:
+            case IS_IMPLEMENTED:
+                return false;
+            default:
+                return true;
             }
+        }
+
+        @Override
+        public String getName() {
+            return name();
         }
     }
 
+    public UseSite(Type useType, JavaElement site) {
+        super(site, useType);
+    }
+
+    @Override
+    public Type getType() {
+        return (Type) super.getType();
+    }
+
     /**
-     * A visitor of the use site.
+     * This checks if the {@link #getType() type} of the use causes the use site to be part of the API but it also
+     * checks that the site actually can cause the used type to be in the API. In particular, protected members of final
+     * classes cannot move to the API, because no outside caller can access those members.
+     * <p>
+     * Implementation note: This can only be reliably used once the element forest is completely constructed. The first
+     * point when this is safe is during the element forest pruning. In particular, one cannot use this in
+     * {@link org.revapi.TreeFilter}s because those are used during element forest construction.
      *
-     * @param <R> the type of the returned value
-     * @param <P> the type of the parameter passed to the visitor
+     * @return {@code true} if the use site moves the used type to the API, {@code false} otherwise.
      */
-    public interface Visitor<R, P> {
+    public boolean isMovingToApi() {
+        if (!getType().isMovingToApi()) {
+            return false;
+        }
 
-        /**
-         * Visits the use site.
-         *
-         * @param type      the type that is being used
-         * @param use       the site of the use of the type
-         * @param parameter the parameter passed by the caller
-         *
-         * @return non-null value indicates early exit before visiting all use sites.
-         */
-        @Nullable
-        R visit(@Nonnull DeclaredType type, @Nonnull UseSite use, @Nullable P parameter);
-
-        /**
-         * Called when all uses have been visited.
-         *
-         *
-         * @param type type type that is being used
-         * @param parameter the parameter passed by the caller
-         * @return a return value
-         */
-        @Nullable
-        R end(DeclaredType type, @Nullable P parameter);
-    }
-
-    private final Type useType;
-    private final JavaElement site;
-
-    public UseSite(@Nonnull Type useType, @Nonnull JavaElement site) {
-        this.useType = useType;
-        this.site = site;
-    }
-
-    @Nonnull
-    public JavaElement getSite() {
-        return site;
-    }
-
-    @Nonnull
-    public Type getUseType() {
-        return useType;
+        return isEffectivelyInApi(getElement());
     }
 
     @Override
     public String toString() {
         final StringBuilder sb = new StringBuilder("UseSite[");
-        sb.append("site=").append(site);
-        sb.append(", useType=").append(useType);
+        sb.append("site=").append(getElement());
+        sb.append(", useType=").append(getType());
         sb.append(']');
         return sb.toString();
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
+    private static boolean isEffectivelyInApi(JavaElement el) {
+        if (!(el instanceof JavaModelElement)) {
             return true;
         }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
+
+        JavaModelElement me = (JavaModelElement) el;
+        JavaModelElement parent = me.getParent();
+
+        if (me instanceof JavaMethodParameterElement) {
+            return isEffectivelyInApi(parent);
         }
 
-        UseSite useSite = (UseSite) o;
+        Set<Modifier> modifiers = me.getDeclaringElement().getModifiers();
 
-        return site.equals(useSite.site) && useType == useSite.useType;
-    }
+        if (modifiers.contains(Modifier.PUBLIC)) {
+            return parent == null || isEffectivelyInApi(parent);
+        }
 
-    @Override
-    public int hashCode() {
-        int result = useType.hashCode();
-        result = 31 * result + site.hashCode();
-        return result;
+        if (modifiers.contains(Modifier.PROTECTED)) {
+            // a protected element in a final class is effectively not part of the api, because it cannot be accessed
+            // outside it. If we found a usage of it, it must be in a context which has access to it.
+            if (parent != null && parent.getDeclaringElement().getModifiers().contains(Modifier.FINAL)) {
+                return false;
+            }
+            return parent == null || isEffectivelyInApi(parent);
+        } else {
+            // package-private or private
+            return false;
+        }
     }
 }

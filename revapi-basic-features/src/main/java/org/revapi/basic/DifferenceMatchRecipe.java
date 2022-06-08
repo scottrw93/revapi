@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,41 +16,47 @@
  */
 package org.revapi.basic;
 
+import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toMap;
 
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-import org.jboss.dmr.ModelNode;
-import org.jboss.dmr.ModelType;
-import org.revapi.Difference;
+import javax.annotation.Nullable;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import org.revapi.ArchiveAnalyzer;
 import org.revapi.Element;
+import org.revapi.ElementMatcher;
+import org.revapi.TreeFilter;
+import org.revapi.configuration.JSONUtil;
 
 /**
- * A helper class to {@link org.revapi.basic.AbstractDifferenceReferringTransform} that defines the match of
- * a configuration element and a difference.
+ * A helper class to {@link org.revapi.basic.AbstractDifferenceReferringTransform} that defines the match of a
+ * configuration element and a difference.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public abstract class DifferenceMatchRecipe {
-    final ModelNode config;
+    final JsonNode config;
     final boolean regex;
     final String code;
     final Pattern codeRegex;
-    final String oldElement;
-    final Pattern oldElementRegex;
-    final String newElement;
-    final Pattern newElementRegex;
+    final ElementMatcher.CompiledRecipe oldRecipe;
+    final ElementMatcher.CompiledRecipe newRecipe;
     final Map<String, String> attachments;
     final Map<String, Pattern> attachmentRegexes;
 
-    protected DifferenceMatchRecipe(ModelNode config, String... additionalReservedProperties) {
-        if (!config.has("code")) {
+    protected DifferenceMatchRecipe(Map<String, ElementMatcher> matchers, JsonNode config,
+            String... additionalReservedProperties) {
+        if (!config.hasNonNull("code")) {
             throw new IllegalArgumentException("Difference code has to be specified.");
         }
 
@@ -59,17 +65,13 @@ public abstract class DifferenceMatchRecipe {
         reservedProperties.add("code");
         reservedProperties.add("old");
         reservedProperties.add("new");
-        for (String p : additionalReservedProperties) {
-            reservedProperties.add(p);
-        }
+        reservedProperties.addAll(asList(additionalReservedProperties));
 
-        regex = config.has("regex") && config.get("regex").asBoolean();
-        code = config.get("code").asString();
+        regex = config.path("regex").asBoolean();
+        code = config.get("code").asText();
         codeRegex = regex ? Pattern.compile(code) : null;
-        oldElement = getElement(config.get("old"));
-        oldElementRegex = regex && oldElement != null ? Pattern.compile(oldElement) : null;
-        newElement = getElement(config.get("new"));
-        newElementRegex = regex && newElement != null ? Pattern.compile(newElement) : null;
+        oldRecipe = getRecipe(regex, config.path("old"), matchers);
+        newRecipe = getRecipe(regex, config.path("new"), matchers);
         attachments = getAttachments(config, reservedProperties);
         if (regex) {
             attachmentRegexes = attachments.entrySet().stream()
@@ -80,86 +82,57 @@ public abstract class DifferenceMatchRecipe {
         this.config = config;
     }
 
-    public boolean matches(Difference difference, Element oldElement, Element newElement) {
-        if (regex) {
-            boolean baseMatch = codeRegex.matcher(difference.code).matches() &&
-                (oldElementRegex == null ||
-                    oldElementRegex.matcher(oldElement.getFullHumanReadableString()).matches()) &&
-                (newElementRegex == null ||
-                    newElementRegex.matcher(newElement.getFullHumanReadableString()).matches());
-            if (!baseMatch) {
-                return false;
-            } else {
-                //regexes empty | attachments empty | allMatched
-                //            0 |                 0 | each regex matches
-                //            0 |                 1 | false
-                //            1 |                 0 | true
-                //            1 |                 1 | true
-                boolean allMatched = attachmentRegexes.isEmpty() || !difference.attachments.isEmpty();
-                for (Map.Entry<String, String> e: difference.attachments.entrySet()) {
-                    String key = e.getKey();
-                    String val = e.getValue();
-
-                    Pattern match = attachmentRegexes.get(key);
-                    if (match != null && !match.matcher(val).matches()) {
-                        return false;
-                    } else {
-                        allMatched = true;
-                    }
-                }
-
-                return allMatched;
-            }
-        } else {
-            boolean baseMatch = code.equals(difference.code) &&
-                (this.oldElement == null || this.oldElement.equals(oldElement.getFullHumanReadableString())) &&
-                (this.newElement == null || this.newElement.equals(newElement.getFullHumanReadableString()));
-
-            if (!baseMatch) {
-                return false;
-            } else {
-                boolean allMatched = attachments.isEmpty() || !difference.attachments.isEmpty();
-                for (Map.Entry<String, String> e : difference.attachments.entrySet()) {
-                    String key = e.getKey();
-                    String val = e.getValue();
-
-                    String match = attachments.get(key);
-                    if (match != null && !match.equals(val)) {
-                        return false;
-                    } else {
-                        allMatched = true;
-                    }
-                }
-
-                return allMatched;
-            }
-        }
+    @Nullable
+    public <E extends Element<E>> MatchingProgress<E> startWithAnalyzers(ArchiveAnalyzer<E> oldAnalyzer,
+            ArchiveAnalyzer<E> newAnalyzer) {
+        TreeFilter<E> oldFilter = oldRecipe == null ? null : oldRecipe.filterFor(oldAnalyzer);
+        TreeFilter<E> newFilter = newRecipe == null ? null : newRecipe.filterFor(newAnalyzer);
+        return createMatchingProgress(oldFilter, newFilter);
     }
 
-    public abstract Difference transformMatching(Difference difference, Element oldElement,
-        Element newElement);
+    protected abstract <E extends Element<E>> MatchingProgress<E> createMatchingProgress(
+            @Nullable TreeFilter<E> oldFilter, @Nullable TreeFilter<E> newFilter);
 
-    private static String getElement(ModelNode elementRoot) {
-        if (!elementRoot.isDefined()) {
+    private static ElementMatcher.CompiledRecipe getRecipe(boolean regex, JsonNode elementRoot,
+            Map<String, ElementMatcher> matchers) {
+        if (elementRoot.isMissingNode()) {
             return null;
         }
 
-        return elementRoot.getType() == ModelType.STRING ? elementRoot.asString() : null;
+        if (elementRoot.isTextual()) {
+            String recipe = elementRoot.asText();
+            return (regex ? new RegexElementMatcher() : new ExactElementMatcher()).compile(recipe)
+                    .orElseThrow(() -> new IllegalArgumentException("Failed to compile the match recipe."));
+        } else {
+            String matcherId = elementRoot.path("matcher").asText();
+            String recipe = elementRoot.path("match").asText();
+
+            ElementMatcher matcher = matchers.get(matcherId);
+
+            if (matcher == null) {
+                throw new IllegalArgumentException("Matcher called '" + matcherId + "' not found.");
+            }
+
+            return matcher.compile(recipe)
+                    .orElseThrow(() -> new IllegalArgumentException("Failed to compile the match recipe."));
+        }
     }
 
-    private static Map<String, String> getAttachments(ModelNode elementRoot, Set<String> reservedProperties) {
-        if (!elementRoot.isDefined()) {
+    private static Map<String, String> getAttachments(JsonNode elementRoot, Set<String> reservedProperties) {
+        if (JSONUtil.isNullOrUndefined(elementRoot)) {
             return Collections.emptyMap();
         }
 
-        if (elementRoot.getType() != ModelType.OBJECT) {
+        if (!elementRoot.isObject()) {
             return Collections.emptyMap();
         } else {
-            Set<String> keys = elementRoot.keys();
-            Map<String, String> ret = new HashMap<>(keys.size());
-            for (String key: keys) {
-                if (!reservedProperties.contains(key)) {
-                    ret.put(key, elementRoot.get(key).asString());
+            Map<String, String> ret = new HashMap<>();
+
+            Iterator<Map.Entry<String, JsonNode>> it = elementRoot.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                if (!reservedProperties.contains(e.getKey())) {
+                    ret.put(e.getKey(), e.getValue().asText());
                 }
             }
 

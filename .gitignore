@@ -6,14 +6,21 @@ target/
 pom.xml.releaseBackup
 release.properties
 pom.xml.versionsBackup
+pom.xml.bak
 
 # IDE files
 .project
 .classpath
 .settings
 .idea
+.vscode
 *.ipr
 *.iml
 *.iws
 nb-configuration.xml
 .vscode/
+
+.factorypath
+
+# Java Flight Recorder
+*.jfr

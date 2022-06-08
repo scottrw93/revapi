@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,16 +18,11 @@ package org.revapi.maven;
 
 import static java.util.stream.Collectors.toList;
 
+import static org.revapi.maven.utils.ArtifactResolver.getRevapiDependencySelector;
+import static org.revapi.maven.utils.ArtifactResolver.getRevapiDependencyTraverser;
+
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -38,7 +33,6 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -48,9 +42,6 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.configuration.PlexusConfiguration;
-import org.codehaus.plexus.configuration.xml.XmlPlexusConfiguration;
-import org.codehaus.plexus.util.xml.Xpp3DomBuilder;
-import org.codehaus.plexus.util.xml.pull.XmlPullParserException;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositoryException;
 import org.eclipse.aether.RepositorySystem;
@@ -60,33 +51,25 @@ import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.repository.RepositoryPolicy;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.VersionRangeResolutionException;
-import org.jboss.dmr.ModelNode;
 import org.revapi.API;
 import org.revapi.AnalysisContext;
 import org.revapi.AnalysisResult;
 import org.revapi.PipelineConfiguration;
 import org.revapi.Reporter;
 import org.revapi.Revapi;
-import org.revapi.configuration.JSONUtil;
 import org.revapi.configuration.ValidationResult;
-import org.revapi.configuration.XmlToJson;
 import org.revapi.maven.utils.ArtifactResolver;
-import org.revapi.maven.utils.ScopeDependencySelector;
-import org.revapi.maven.utils.ScopeDependencyTraverser;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class Analyzer {
     private static final Pattern ANY_NON_SNAPSHOT = Pattern.compile("^.*(?<!-SNAPSHOT)$");
     private static final Pattern ANY = Pattern.compile(".*");
 
-    private final PlexusConfiguration pipelineConfiguration;
-
-    private final PlexusConfiguration analysisConfiguration;
-
-    private final Object[] analysisConfigurationFiles;
+    private final PipelineConfiguration.Builder pipelineConfiguration;
 
     private final String[] oldGavs;
 
@@ -95,6 +78,10 @@ public final class Analyzer {
     private final Artifact[] oldArtifacts;
 
     private final Artifact[] newArtifacts;
+
+    private final PromotedDependency[] oldPromotedDependencies;
+
+    private final PromotedDependency[] newPromotedDependencies;
 
     private final MavenProject project;
 
@@ -110,8 +97,6 @@ public final class Analyzer {
 
     private final Log log;
 
-    private final boolean failOnMissingConfigurationFiles;
-
     private final boolean failOnMissingArchives;
 
     private final boolean failOnMissingSupportArchives;
@@ -120,6 +105,8 @@ public final class Analyzer {
 
     private final boolean resolveDependencies;
 
+    private final AnalysisConfigurationGatherer configGatherer;
+
     private final Pattern versionRegex;
 
     private API resolvedOldApi;
@@ -127,23 +114,24 @@ public final class Analyzer {
 
     private Revapi revapi;
 
-    Analyzer(PlexusConfiguration pipelineConfiguration, PlexusConfiguration analysisConfiguration,
+    Analyzer(PipelineConfiguration.Builder pipelineConfiguration, PlexusConfiguration analysisConfiguration,
             Object[] analysisConfigurationFiles, Artifact[] oldArtifacts, Artifact[] newArtifacts, String[] oldGavs,
-            String[] newGavs, MavenProject project, RepositorySystem repositorySystem,
+            String[] newGavs, PromotedDependency[] oldPromotedDependencies,
+            PromotedDependency[] newPromotedDependencies, MavenProject project, RepositorySystem repositorySystem,
             RepositorySystemSession repositorySystemSession, Class<? extends Reporter> reporterType,
             Map<String, Object> contextData, Locale locale, Log log, boolean failOnMissingConfigurationFiles,
             boolean failOnMissingArchives, boolean failOnMissingSupportArchives, boolean alwaysUpdate,
             boolean resolveDependencies, boolean resolveProvidedDependencies,
-            boolean resolveTransitiveProvidedDependencies, String versionRegex,
+            boolean resolveTransitiveProvidedDependencies, boolean expandProperties, String versionRegex,
             Consumer<PipelineConfiguration.Builder> pipelineModifier, Revapi sharedRevapi) {
 
         this.pipelineConfiguration = pipelineConfiguration;
-        this.analysisConfiguration = analysisConfiguration;
-        this.analysisConfigurationFiles = analysisConfigurationFiles;
         this.oldGavs = oldGavs;
         this.newGavs = newGavs;
         this.oldArtifacts = oldArtifacts;
         this.newArtifacts = newArtifacts;
+        this.oldPromotedDependencies = oldPromotedDependencies;
+        this.newPromotedDependencies = newPromotedDependencies;
         this.project = project;
         this.repositorySystem = repositorySystem;
 
@@ -152,15 +140,11 @@ public final class Analyzer {
         this.versionRegex = versionRegex == null ? null : Pattern.compile(versionRegex);
 
         DefaultRepositorySystemSession session = new DefaultRepositorySystemSession(repositorySystemSession);
-        String[] topLevelScopes = resolveProvidedDependencies
-                ? new String[]{"compile", "provided"}
-                : new String[]{"compile"};
-        String[] transitiveScopes = resolveTransitiveProvidedDependencies
-                ? new String[]{"compile", "provided"}
-                : new String[]{"compile"};
 
-        session.setDependencySelector(new ScopeDependencySelector(topLevelScopes, transitiveScopes));
-        session.setDependencyTraverser(new ScopeDependencyTraverser(topLevelScopes, transitiveScopes));
+        session.setDependencySelector(
+                getRevapiDependencySelector(resolveProvidedDependencies, resolveTransitiveProvidedDependencies));
+        session.setDependencyTraverser(
+                getRevapiDependencyTraverser(resolveProvidedDependencies, resolveTransitiveProvidedDependencies));
 
         if (alwaysUpdate) {
             session.setUpdatePolicy(RepositoryPolicy.UPDATE_POLICY_ALWAYS);
@@ -172,11 +156,14 @@ public final class Analyzer {
         this.contextData = contextData;
         this.locale = locale;
         this.log = log;
-        this.failOnMissingConfigurationFiles = failOnMissingConfigurationFiles;
         this.failOnMissingArchives = failOnMissingArchives;
         this.failOnMissingSupportArchives = failOnMissingSupportArchives;
         this.revapi = sharedRevapi;
         this.pipelineModifier = pipelineModifier;
+
+        this.configGatherer = new AnalysisConfigurationGatherer(analysisConfiguration, analysisConfigurationFiles,
+                failOnMissingConfigurationFiles, expandProperties, new PropertyValueResolver(project),
+                project.getBasedir(), log);
     }
 
     public static String getProjectArtifactCoordinates(MavenProject project, String versionOverride) {
@@ -188,11 +175,10 @@ public final class Analyzer {
         String version = versionOverride == null ? project.getVersion() : versionOverride;
 
         if (artifact.hasClassifier()) {
-            return project.getGroupId() + ":" + project.getArtifactId() + ":" + extension + ":" +
-                    artifact.getClassifier() + ":" + version;
+            return project.getGroupId() + ":" + project.getArtifactId() + ":" + extension + ":"
+                    + artifact.getClassifier() + ":" + version;
         } else {
-            return project.getGroupId() + ":" + project.getArtifactId() + ":" + extension + ":" +
-                    version;
+            return project.getGroupId() + ":" + project.getArtifactId() + ":" + extension + ":" + version;
         }
     }
 
@@ -200,7 +186,7 @@ public final class Analyzer {
         buildRevapi();
 
         AnalysisContext.Builder ctxBuilder = AnalysisContext.builder(revapi).withLocale(locale);
-        gatherConfig(ctxBuilder);
+        configGatherer.gatherConfig(revapi, ctxBuilder);
 
         ctxBuilder.withData(contextData);
 
@@ -212,20 +198,28 @@ public final class Analyzer {
      * for a RELEASE or LATEST, the gav is resolved such it a release not newer than the project version is found that
      * optionally corresponds to the provided version regex, if provided.
      *
-     * <p>If the gav exactly matches the current project, the file of the artifact is found on the filesystem in
-     * target directory and the resolver is ignored.
+     * <p>
+     * If the gav exactly matches the current project, the file of the artifact is found on the filesystem in target
+     * directory and the resolver is ignored.
      *
-     * @param project      the project to restrict by, if applicable
-     * @param gav          the gav to resolve
-     * @param versionRegex the optional regex the version must match to be considered.
-     * @param resolver     the version resolver to use
+     * @param project
+     *            the project to restrict by, if applicable
+     * @param gav
+     *            the gav to resolve
+     * @param versionRegex
+     *            the optional regex the version must match to be considered.
+     * @param resolver
+     *            the version resolver to use
+     * 
      * @return the resolved artifact matching the criteria.
-     * @throws VersionRangeResolutionException on error
-     * @throws ArtifactResolutionException     on error
+     * 
+     * @throws VersionRangeResolutionException
+     *             on error
+     * @throws ArtifactResolutionException
+     *             on error
      */
     static Artifact resolveConstrained(MavenProject project, String gav, Pattern versionRegex,
-            ArtifactResolver resolver)
-            throws VersionRangeResolutionException, ArtifactResolutionException {
+            ArtifactResolver resolver) throws VersionRangeResolutionException, ArtifactResolutionException {
         boolean latest = gav.endsWith(":LATEST");
         if (latest || gav.endsWith(":RELEASE")) {
             Artifact a = new DefaultArtifact(gav);
@@ -236,9 +230,8 @@ public final class Analyzer {
                 versionRegex = versionRegex == null ? ANY_NON_SNAPSHOT : versionRegex;
             }
 
-            String upTo = project.getGroupId().equals(a.getGroupId()) && project.getArtifactId().equals(a.getArtifactId())
-                    ? project.getVersion()
-                    : null;
+            String upTo = project.getGroupId().equals(a.getGroupId())
+                    && project.getArtifactId().equals(a.getArtifactId()) ? project.getVersion() : null;
 
             return resolver.resolveNewestMatching(gav, upTo, versionRegex, latest, latest);
         } else {
@@ -295,8 +288,8 @@ public final class Analyzer {
                 if (failOnMissingArchives) {
                     throw new IllegalStateException(message, e);
                 } else {
-                    log.warn(message + " The API analysis will proceed comparing the new archives against an empty" +
-                            " archive.");
+                    log.warn(message + " The API analysis will proceed comparing the new archives against an empty"
+                            + " archive.");
                 }
             }
 
@@ -319,12 +312,12 @@ public final class Analyzer {
                 }
             }
 
-            //now we need to be a little bit clever. When using RELEASE or LATEST as the version of the old artifact
-            //it might happen that it gets resolved to the same version as the new artifacts - this notoriously happens
-            //when releasing using the release plugin - you first build your artifacts, put them into the local repo
-            //and then do the site updates for the released version. When you do the site, maven will find the released
-            //version in the repo and resolve RELEASE to it. You compare it against what you just built, i.e. the same
-            //code, et voila, the site report doesn't ever contain any found differences...
+            // now we need to be a little bit clever. When using RELEASE or LATEST as the version of the old artifact
+            // it might happen that it gets resolved to the same version as the new artifacts - this notoriously happens
+            // when releasing using the release plugin - you first build your artifacts, put them into the local repo
+            // and then do the site updates for the released version. When you do the site, maven will find the released
+            // version in the repo and resolve RELEASE to it. You compare it against what you just built, i.e. the same
+            // code, et voila, the site report doesn't ever contain any found differences...
 
             Set<MavenArchive> oldTransitiveDeps = new HashSet<>();
             Set<MavenArchive> newTransitiveDeps = new HashSet<>();
@@ -336,8 +329,31 @@ public final class Analyzer {
                 newTransitiveDeps.addAll(collectDeps("new", resolver, resolvedNew));
             }
 
+            promoteDependencies(oldArchives, oldTransitiveDeps, oldPromotedDependencies);
+            promoteDependencies(newArchives, newTransitiveDeps, newPromotedDependencies);
+
             resolvedOldApi = API.of(oldArchives).supportedBy(oldTransitiveDeps).build();
             resolvedNewApi = API.of(newArchives).supportedBy(newTransitiveDeps).build();
+        }
+    }
+
+    private void promoteDependencies(List<MavenArchive> archives, Set<MavenArchive> dependencies,
+            PromotedDependency[] blueprints) {
+        if (blueprints == null || blueprints.length == 0) {
+            return;
+        }
+
+        Iterator<MavenArchive> it = dependencies.iterator();
+        while (it.hasNext()) {
+            MavenArchive ma = it.next();
+            DefaultArtifact dep = new DefaultArtifact(ma.getName());
+            for (PromotedDependency b : blueprints) {
+                if (b.matches(dep)) {
+                    archives.add(ma);
+                    it.remove();
+                    break;
+                }
+            }
         }
     }
 
@@ -382,8 +398,7 @@ public final class Analyzer {
     }
 
     private Set<MavenArchive> handleResolutionError(Exception e, String depDescription, Set<MavenArchive> toReturn) {
-        String message = "Failed to resolve dependencies of " + depDescription + " artifacts: " + e.getMessage() +
-                ".";
+        String message = "Failed to resolve dependencies of " + depDescription + " artifacts: " + e.getMessage() + ".";
         if (failOnMissingSupportArchives) {
             throw new IllegalArgumentException(message, e);
         } else {
@@ -392,7 +407,7 @@ public final class Analyzer {
             } else {
                 log.warn(message + ". The API analysis might produce unexpected results.");
             }
-            return toReturn == null ? Collections.<MavenArchive>emptySet() : toReturn;
+            return toReturn == null ? Collections.<MavenArchive> emptySet() : toReturn;
         }
     }
 
@@ -404,25 +419,28 @@ public final class Analyzer {
             return AnalysisResult.fakeSuccess();
         }
 
-        List<?> oldArchives = StreamSupport.stream(
-                (Spliterator<MavenArchive>) resolvedOldApi.getArchives().spliterator(), false)
+        List<?> oldArchives = StreamSupport
+                .stream((Spliterator<MavenArchive>) resolvedOldApi.getArchives().spliterator(), false)
                 .map(MavenArchive::getName).collect(toList());
 
-        List<?> newArchives = StreamSupport.stream(
-                (Spliterator<MavenArchive>) resolvedNewApi.getArchives().spliterator(), false)
+        List<?> newArchives = StreamSupport
+                .stream((Spliterator<MavenArchive>) resolvedNewApi.getArchives().spliterator(), false)
                 .map(MavenArchive::getName).collect(toList());
 
-        log.info("Comparing " + oldArchives + " against " + newArchives +
-                (resolveDependencies ? " (including their transitive dependencies)." : "."));
+        log.info("Comparing " + oldArchives + " against " + newArchives
+                + (resolveDependencies ? " (including their transitive dependencies)." : "."));
 
         try {
             buildRevapi();
 
             AnalysisContext.Builder ctxBuilder = AnalysisContext.builder(revapi).withOldAPI(resolvedOldApi)
                     .withNewAPI(resolvedNewApi).withLocale(locale);
-            gatherConfig(ctxBuilder);
+            configGatherer.gatherConfig(revapi, ctxBuilder);
 
             ctxBuilder.withData(contextData);
+
+            AnalysisContext ctx = ctxBuilder.build();
+            log.debug("Effective analysis configuration:\n" + ctx.getConfiguration().toJSONString(false));
 
             return revapi.analyze(ctxBuilder.build());
         } catch (Exception e) {
@@ -443,277 +461,14 @@ public final class Analyzer {
         return revapi;
     }
 
-    private PipelineConfiguration.Builder gatherPipelineConfiguration() {
-        String jsonConfig = pipelineConfiguration == null ? null : pipelineConfiguration.getValue();
-
-        PipelineConfiguration.Builder ret;
-
-        if (jsonConfig == null) {
-            // we're seeing XML. PipelineConfiguration is a set "format", not something dynamic as the extension
-            // configurations. We can therefore try to parse it straight away.
-            ret = parsePipelineConfigurationXML();
-        } else {
-            ModelNode json = ModelNode.fromJSONString(jsonConfig);
-            ret = PipelineConfiguration.parse(json);
-        }
-
-        // important to NOT add any extensions here yet. That's the job of the pipelineModifier that is responsible
-        // to construct
-        return ret;
-    }
-
-    private PipelineConfiguration.Builder parsePipelineConfigurationXML() {
-        PipelineConfiguration.Builder bld = PipelineConfiguration.builder();
-
-        if (pipelineConfiguration == null) {
-            return bld;
-        }
-
-        for (PlexusConfiguration c : pipelineConfiguration.getChildren()) {
-            switch (c.getName()) {
-            case "analyzers":
-                parseIncludeExclude(c, bld::addAnalyzerExtensionIdInclude, bld::addAnalyzerExtensionIdExclude);
-                break;
-            case "reporters":
-                parseIncludeExclude(c, bld::addReporterExtensionIdInclude, bld::addReporterExtensionIdExclude);
-                break;
-            case "filters":
-                parseIncludeExclude(c, bld::addFilterExtensionIdInclude, bld::addFilterExtensionIdExclude);
-                break;
-            case "transforms":
-                parseIncludeExclude(c, bld::addTransformExtensionIdInclude, bld::addTransformExtensionIdExclude);
-                break;
-            case "transformBlocks":
-                for (PlexusConfiguration b : c.getChildren()) {
-                    List<String> blockIds = Stream.of(b.getChildren())
-                            .map(PlexusConfiguration::getValue).collect(toList());
-                    bld.addTransformationBlock(blockIds);
-                }
-                break;
-            }
-        }
-
-        return bld;
-    }
-
-    private void parseIncludeExclude(PlexusConfiguration parent, Consumer<String> handleInclude,
-            Consumer<String> handleExclude) {
-
-        PlexusConfiguration include = parent.getChild("include");
-        PlexusConfiguration exclude = parent.getChild("exclude");
-
-        if (include != null) {
-            Stream.of(include.getChildren()).forEach(c -> handleInclude.accept(c.getValue()));
-        }
-
-        if (exclude != null) {
-            Stream.of(exclude.getChildren()).forEach(c -> handleExclude.accept(c.getValue()));
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private void gatherConfig(AnalysisContext.Builder ctxBld) throws MojoExecutionException {
-        if (analysisConfigurationFiles != null && analysisConfigurationFiles.length > 0) {
-            for (Object pathOrConfigFile : analysisConfigurationFiles) {
-                ConfigurationFile configFile;
-                if (pathOrConfigFile instanceof String) {
-                    configFile = new ConfigurationFile();
-                    configFile.setPath((String) pathOrConfigFile);
-                } else {
-                    configFile = (ConfigurationFile) pathOrConfigFile;
-                }
-
-                String path = configFile.getPath();
-                String resource = configFile.getResource();
-
-                if (path == null && resource == null) {
-                    throw new MojoExecutionException(
-                            "Either 'path' or 'resource' has to be specified in a configurationFile definition.");
-                } else if (path != null && resource != null) {
-                    throw new MojoExecutionException(
-                            "Either 'path' or 'resource' has to be specified in a configurationFile definition but" +
-                                    " not both.");
-                }
-
-                String readErrorMessage = "Error while processing the configuration file on "
-                        + (path == null ? "classpath " + resource : "path " + path);
-
-                Supplier<Iterator<InputStream>> configFileContents;
-
-                if (path != null) {
-                    File f = new File(path);
-                    if (!f.isAbsolute()) {
-                        f = new File(project.getBasedir(), path);
-                    }
-
-                    if (!f.isFile() || !f.canRead()) {
-                        String message = "Could not locate analysis configuration file '" + f.getAbsolutePath() + "'.";
-                        if (failOnMissingConfigurationFiles) {
-                            throw new MojoExecutionException(message);
-                        } else {
-                            log.debug(message);
-                            continue;
-                        }
-                    }
-
-                    final File ff = f;
-                    configFileContents = () -> {
-                        try {
-                            return Collections.<InputStream>singletonList(new FileInputStream(ff)).iterator();
-                        } catch (FileNotFoundException e) {
-                            throw new MarkerException("Failed to read the configuration file '"
-                                    + ff.getAbsolutePath() + "'.", e);
-                        }
-                    };
-                } else {
-                    configFileContents =
-                            () -> {
-                                try {
-                                    return Collections.list(getClass().getClassLoader().getResources(resource))
-                                            .stream()
-                                            .map(url -> {
-                                                try {
-                                                    return url.openStream();
-                                                } catch (IOException e) {
-                                                    throw new MarkerException(
-                                                            "Failed to read the classpath resource '" + url + "'.");
-                                                }
-                                            }).iterator();
-                                } catch (IOException e) {
-                                    throw new IllegalArgumentException(
-                                            "Failed to locate classpath resources on path '" + resource + "'.");
-                                }
-                            };
-                }
-
-                Iterator<InputStream> it = configFileContents.get();
-                List<Integer> nonJsonIndexes = new ArrayList<>(4);
-                int idx = 0;
-                while (it.hasNext()) {
-                    ModelNode config;
-                    try (InputStream in = it.next()) {
-                        config = readJson(in);
-                    } catch (MarkerException | IOException e) {
-                        throw new MojoExecutionException(readErrorMessage, e.getCause());
-                    }
-
-                    if (config == null) {
-                        nonJsonIndexes.add(idx);
-                        continue;
-                    }
-
-                    mergeJsonConfigFile(ctxBld, configFile, config);
-
-                    idx++;
-                }
-
-                if (!nonJsonIndexes.isEmpty()) {
-                    idx = 0;
-                    it = configFileContents.get();
-                    while (it.hasNext()) {
-                        try (Reader rdr = new InputStreamReader(it.next())) {
-                            if (nonJsonIndexes.contains(idx)) {
-                                mergeXmlConfigFile(ctxBld, configFile, rdr);
-                            }
-                        } catch (MarkerException | IOException | XmlPullParserException e) {
-                            throw new MojoExecutionException(readErrorMessage, e.getCause());
-                        }
-
-                        idx++;
-                    }
-                }
-            }
-        }
-
-        if (analysisConfiguration != null) {
-            String text = analysisConfiguration.getValue();
-            if (text == null || text.isEmpty()) {
-                convertNewStyleConfigFromXml(ctxBld, getRevapi());
-            } else {
-                ctxBld.mergeConfigurationFromJSON(text);
-            }
-        }
-    }
-
-    private void mergeXmlConfigFile(AnalysisContext.Builder ctxBld, ConfigurationFile configFile, Reader rdr)
-            throws IOException, XmlPullParserException {
-        XmlToJson<PlexusConfiguration> conv = new XmlToJson<>(revapi, PlexusConfiguration::getName,
-                PlexusConfiguration::getValue, PlexusConfiguration::getAttribute, x -> Arrays.asList(x.getChildren()));
-
-        PlexusConfiguration xml = new XmlPlexusConfiguration(Xpp3DomBuilder.build(rdr));
-
-        String[] roots = configFile.getRoots();
-
-        if (roots == null) {
-            ctxBld.mergeConfiguration(conv.convert(xml));
-        } else {
-            roots:
-            for (String r : roots) {
-                PlexusConfiguration root = xml;
-                boolean first = true;
-                String[] rootPath = r.split("/");
-                for (String name : rootPath) {
-                    if (first) {
-                        first = false;
-                        if (!name.equals(root.getName())) {
-                            continue roots;
-                        }
-                    } else {
-                        root = root.getChild(name);
-                        if (root == null) {
-                            continue roots;
-                        }
-                    }
-                }
-
-                ctxBld.mergeConfiguration(conv.convert(root));
-            }
-        }
-    }
-
-    private void mergeJsonConfigFile(AnalysisContext.Builder ctxBld, ConfigurationFile configFile, ModelNode config) {
-        String[] roots = configFile.getRoots();
-
-        if (roots == null) {
-            ctxBld.mergeConfiguration(config);
-        } else {
-            for (String r : roots) {
-                String[] rootPath = r.split("/");
-                ModelNode root = config.get(rootPath);
-
-                if (!root.isDefined()) {
-                    continue;
-                }
-
-                ctxBld.mergeConfiguration(root);
-            }
-        }
-    }
-
     private void buildRevapi() {
         if (revapi == null) {
-            PipelineConfiguration.Builder builder = gatherPipelineConfiguration();
-            pipelineModifier.accept(builder);
+            pipelineModifier.accept(pipelineConfiguration);
             if (reporterType != null) {
-                builder.withReporters(reporterType);
+                pipelineConfiguration.withReporters(reporterType);
             }
 
-            revapi = new Revapi(builder.build());
-        }
-    }
-
-    private void convertNewStyleConfigFromXml(AnalysisContext.Builder bld, Revapi revapi) {
-        XmlToJson<PlexusConfiguration> conv = new XmlToJson<>(revapi, PlexusConfiguration::getName,
-                PlexusConfiguration::getValue, PlexusConfiguration::getAttribute, x -> Arrays.asList(x.getChildren()));
-
-        bld.mergeConfiguration(conv.convert(analysisConfiguration));
-    }
-
-    private ModelNode readJson(InputStream in) {
-        try {
-            return ModelNode.fromJSONStream(JSONUtil.stripComments(in, Charset.forName("UTF-8")));
-        } catch (IOException e) {
-            return null;
+            revapi = new Revapi(pipelineConfiguration.build());
         }
     }
 
@@ -725,10 +480,5 @@ public final class Analyzer {
         public MarkerException(String message, Throwable cause) {
             super(message, cause);
         }
-    }
-
-    @FunctionalInterface
-    private interface ThrowingSupplier<T> {
-        T get() throws Exception;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,12 +38,14 @@ import javax.tools.ToolProvider;
 import org.junit.Assert;
 import org.junit.Test;
 import org.revapi.java.checks.common.SerializationChecker;
+import org.revapi.java.spi.JavaTypeElement;
 import org.revapi.java.spi.TypeEnvironment;
 import org.revapi.java.suid.Empty;
 import org.revapi.java.suid.TestClass;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public class SUIDGeneratorTest {
@@ -78,13 +80,8 @@ public class SUIDGeneratorTest {
                 }
 
                 @Override
-                public boolean isExplicitlyIncluded(Element element) {
-                    return true;
-                }
-
-                @Override
-                public boolean isExplicitlyExcluded(Element element) {
-                    return false;
+                public JavaTypeElement getModelElement(TypeElement e) {
+                    return null;
                 }
             };
 
@@ -103,8 +100,8 @@ public class SUIDGeneratorTest {
 
             JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 
-            JavaCompiler.CompilationTask task = compiler
-                .getTask(null, null, null, null, Arrays.asList(TestClass.class.getName()),
+            JavaCompiler.CompilationTask task = compiler.getTask(null, null, null, null,
+                    Arrays.asList(TestClass.class.getName()),
                     Arrays.asList(new SourceInClassLoader("suid/TestClass.java")));
 
             task.setProcessors(Arrays.asList(ap));
@@ -126,9 +123,9 @@ public class SUIDGeneratorTest {
 
             JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 
-            JavaCompiler.CompilationTask task = compiler
-                    .getTask(null, null, null, null, Arrays.asList(TestClass.class.getName()),
-                            Arrays.asList(new SourceInClassLoader("suid/Empty.java")));
+            JavaCompiler.CompilationTask task = compiler.getTask(null, null, null, null,
+                    Arrays.asList(TestClass.class.getName()),
+                    Arrays.asList(new SourceInClassLoader("suid/Empty.java")));
 
             task.setProcessors(Arrays.asList(ap));
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,8 @@
  */
 package org.revapi.java.compilation;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,18 +28,20 @@ import java.util.concurrent.CountDownLatch;
 
 import javax.annotation.Nonnull;
 import javax.annotation.processing.ProcessingEnvironment;
-import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 import org.revapi.API;
+import org.revapi.Archive;
+import org.revapi.java.model.JavaElementFactory;
 import org.revapi.java.model.JavaElementForest;
+import org.revapi.java.spi.JavaTypeElement;
 import org.revapi.java.spi.TypeEnvironment;
-import org.revapi.java.spi.Util;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class ProbingEnvironment implements TypeEnvironment {
@@ -46,8 +50,6 @@ public final class ProbingEnvironment implements TypeEnvironment {
     private final CountDownLatch compilationProgressLatch = new CountDownLatch(1);
     private final CountDownLatch compilationEnvironmentTeardownLatch = new CountDownLatch(1);
     private final JavaElementForest tree;
-    private final Set<String> explicitExclusions = new HashSet<>();
-    private final Set<String> explicitInclusions = new HashSet<>();
     private Map<TypeElement, org.revapi.java.model.TypeElement> typeMap;
     private Map<TypeElement, Set<TypeElement>> derivedTypes = new HashMap<>();
     private Map<TypeElement, Set<TypeElement>> superTypes = new HashMap<>();
@@ -81,14 +83,6 @@ public final class ProbingEnvironment implements TypeEnvironment {
         return processingEnvironment != null;
     }
 
-    public boolean isExplicitlyIncluded(Element element) {
-        return explicitInclusions.contains(Util.toHumanReadableString(element));
-    }
-
-    public boolean isExplicitlyExcluded(Element element) {
-        return explicitExclusions.contains(Util.toHumanReadableString(element));
-    }
-
     public boolean isScanningComplete() {
         return typeMap != null;
     }
@@ -97,8 +91,8 @@ public final class ProbingEnvironment implements TypeEnvironment {
     @Override
     public Elements getElementUtils() {
         if (processingEnvironment == null) {
-            throw new IllegalStateException("Types instance not yet available. It is too early to call this method." +
-                    " Wait until after the archives are visited and the API model constructed.");
+            throw new IllegalStateException("Types instance not yet available. It is too early to call this method."
+                    + " Wait until after the archives are visited and the API model constructed.");
         }
         return new MissingTypeAwareDelegatingElements(processingEnvironment.getElementUtils());
     }
@@ -108,19 +102,41 @@ public final class ProbingEnvironment implements TypeEnvironment {
     @SuppressWarnings("ConstantConditions")
     public Types getTypeUtils() {
         if (processingEnvironment == null) {
-            throw new IllegalStateException("Types instance not yet available. It is too early to call this method." +
-                    " Wait until after the archives are visited and the API model constructed.");
+            throw new IllegalStateException("Types instance not yet available. It is too early to call this method."
+                    + " Wait until after the archives are visited and the API model constructed.");
         }
         return new MissingTypeAwareDelegatingTypes(processingEnvironment.getTypeUtils());
     }
 
-    //TODO make package private at a sufficient version bump
-    public void setTypeMap(Map<TypeElement, org.revapi.java.model.TypeElement> typeMap) {
-        this.typeMap = typeMap;
+    void setTypeMap(Map<TypeElement, org.revapi.java.model.TypeElement> typeMap) {
+        this.typeMap = Collections.unmodifiableMap(typeMap);
     }
 
     public Map<TypeElement, org.revapi.java.model.TypeElement> getTypeMap() {
         return typeMap;
+    }
+
+    @Override
+    public JavaTypeElement getModelElement(TypeElement javaType) {
+        JavaTypeElement ret = typeMap == null ? null : typeMap.get(javaType);
+
+        if (ret != null) {
+            return ret;
+        }
+
+        return (JavaTypeElement) JavaElementFactory.elementFor(javaType, javaType.asType(), this, new Archive() {
+            @Nonnull
+            @Override
+            public String getName() {
+                return "<unknown>";
+            }
+
+            @Nonnull
+            @Override
+            public InputStream openStream() throws IOException {
+                throw new IOException("Not supported.");
+            }
+        });
     }
 
     public Set<TypeElement> getDerivedTypes(TypeElement superType) {
@@ -137,13 +153,5 @@ public final class ProbingEnvironment implements TypeEnvironment {
                 setSuperTypes(derivedType, grandTypes);
             }
         }
-    }
-
-    public void addExplicitExclusion(String canonicalName) {
-        explicitExclusions.add(canonicalName);
-    }
-
-    public void addExplicitInclusion(String canonicalName) {
-        explicitInclusions.add(canonicalName);
     }
 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright 2014-2019 Lukas Krejci
+    Copyright 2014-2021 Lukas Krejci
     and other contributors as indicated by the @author tags.
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,28 +18,30 @@
 
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>org.revapi</groupId>
         <artifactId>revapi-build</artifactId>
-        <version>39-SNAPSHOT</version>
+        <version>46-SNAPSHOT</version>
         <relativePath>../revapi-build</relativePath>
     </parent>
-    <modelVersion>4.0.0</modelVersion>
-
-    <name>Revapi Maven Utils</name>
-    <description>
-        Maven utilities for Revapi.
-    </description>
-    <url>${web.url}/modules/${project.artifactId}</url>
-
     <artifactId>revapi-maven-utils</artifactId>
-    <version>0.9.2-SNAPSHOT</version>
-
+    <version>0.10.7-SNAPSHOT</version>
+    <name>Revapi Maven Utils</name>
+    <description>Maven utilities for Revapi.</description>
+    <url>https://revapi.org</url>
+    <scm>
+        <connection>scm:git:git://github.com/revapi/revapi.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/revapi/revapi.git</developerConnection>
+        <tag>HEAD</tag>
+        <url>https://github.com/revapi/revapi</url>
+    </scm>
     <properties>
-        <maven-resolver.version>1.1.0</maven-resolver.version>
         <automatic.module.name>org.revapi.maven.utils</automatic.module.name>
+        <maven-resolver-provider.version>3.5.2</maven-resolver-provider.version>
+        <maven-resolver.version>1.1.0</maven-resolver.version>
+        <test.repo.path>${project.build.directory}/test-repo</test.repo.path>
     </properties>
-
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -54,11 +56,34 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
     <dependencies>
         <dependency>
             <groupId>org.apache.maven.resolver</groupId>
             <artifactId>maven-resolver-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.resolver</groupId>
+            <artifactId>maven-resolver-connector-basic</artifactId>
+            <version>${maven-resolver.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-resolver-provider</artifactId>
+            <version>${maven-resolver-provider.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.resolver</groupId>
+            <artifactId>maven-resolver-transport-file</artifactId>
+            <version>${maven-resolver.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.resolver</groupId>
+            <artifactId>maven-resolver-transport-http</artifactId>
+            <version>${maven-resolver.version}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.maven.resolver</groupId>
@@ -69,11 +94,42 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
     </dependencies>
-
-    <scm>
-        <connection>scm:git:git://github.com/revapi/revapi.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/revapi/revapi.git</developerConnection>
-        <url>https://github.com/revapi/revapi</url>
-        <tag>HEAD</tag>
-    </scm>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-invoker-plugin</artifactId>
+                <version>3.2.1</version>
+                <executions>
+                    <execution>
+                        <id>prepare-test-artifacts</id>
+                        <phase>generate-test-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <skipInstallation>${skipTests}</skipInstallation>
+                            <skipInvocation>${skipTests}</skipInvocation>
+                            <localRepositoryPath>${test.repo.path}</localRepositoryPath>
+                            <cloneProjectsTo>${project.build.directory}/test-builds</cloneProjectsTo>
+                            <goals>
+                                <goal>install</goal>
+                            </goals>
+                            <projectsDirectory>${basedir}/src/test/resources/projects</projectsDirectory>
+                            <streamLogs>true</streamLogs>
+                            <settingsFile>${basedir}/src/test/resources/projects/settings.xml</settingsFile>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <repo.path>${test.repo.path}</repo.path>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

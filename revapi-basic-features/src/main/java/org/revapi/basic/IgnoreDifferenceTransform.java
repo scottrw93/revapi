@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,83 +18,62 @@ package org.revapi.basic;
 
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import org.revapi.Difference;
-import org.revapi.Element;
-
-import org.jboss.dmr.ModelNode;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * A generic difference transform that can ignore differences based on the difference code ({@link
- * org.revapi.Difference#code}) and on the old or new elements' full human representations
- * ({@link org.revapi.Element#getFullHumanReadableString()}).
+ * A generic difference transform that can ignore differences based on the difference code
+ * ({@link org.revapi.Difference#code}) and on the old or new elements' full human representations
+ * ({@link org.revapi.Element#getFullHumanReadableString()}) or result of comparing using specified matcher.
  *
- * <p>The transform is configured using properties in the general form of:
- * <pre><code>
- *  {
- *      "revapi" : {
- *          "ignore" : [
- *              {
- *                  "regex" : false,
- *                  "code" : "PROBLEM_CODE",
- *                  "old" : "FULL_REPRESENTATION_OF_THE_OLD_ELEMENT",
- *                  "new" : "FULL_REPRESENTATION_OF_THE_NEW_ELEMENT",
- *                  "justification": "blah"
- *              },
- *              ...
- *          ]
- *      }
- *  }
- * </code></pre>
- * The {@code code} is mandatory (obviously). The {@code old} and {@code new} properties are optional and the rule will
- * match when all the specified properties of it match. If regex attribute is "true" (defaults to "false"), all the
- * code, old and new are understood as regexes (java regexes, not javascript ones).
+ * <p>
+ * See {@code META-INF/ignore-schema.json} for the JSON schema of the configuration.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
+ * 
+ * @deprecated This is superseded by {@link DifferencesTransform}
  */
-public class IgnoreDifferenceTransform
-    extends AbstractDifferenceReferringTransform<IgnoreDifferenceTransform.IgnoreRecipe, Void> {
+@Deprecated
+public class IgnoreDifferenceTransform extends DifferencesTransform {
 
-    public static class IgnoreRecipe extends DifferenceMatchRecipe {
-        public IgnoreRecipe(ModelNode node) {
-            super(node, "justification");
-        }
-
-        @Override
-        public Difference transformMatching(Difference difference, Element oldElement,
-            Element newElement) {
-
-            //we ignore the matching elements, so null is the correct return value.
-            return null;
-        }
-    }
+    private static final Logger LOG = LoggerFactory.getLogger(IgnoreDifferenceTransform.class);
 
     public IgnoreDifferenceTransform() {
         super("revapi.ignore");
+    }
+
+    @Override
+    protected JsonNode getRecipesConfigurationAndInitialize() {
+        JsonNode ret = analysisContext.getConfigurationNode();
+        if (!ret.isNull()) {
+            LOG.warn("The `revapi.ignore` extension is deprecated. Consider using the `revapi.differences` instead.");
+        }
+
+        return ret;
     }
 
     @Nullable
     @Override
     public Reader getJSONSchema() {
         return new InputStreamReader(getClass().getResourceAsStream("/META-INF/ignore-schema.json"),
-                Charset.forName("UTF-8"));
-    }
-
-    @Nullable
-    @Override
-    protected Void initConfiguration() {
-        return null;
+                StandardCharsets.UTF_8);
     }
 
     @Nonnull
     @Override
-    protected IgnoreRecipe newRecipe(Void context, ModelNode config) {
-        return new IgnoreRecipe(config);
+    protected DifferenceRecipe newRecipe(JsonNode config) {
+        ObjectNode cfg = config.deepCopy();
+        cfg.put("ignore", true);
+        return new DifferenceRecipe(cfg, analysisContext);
     }
 
     @Override

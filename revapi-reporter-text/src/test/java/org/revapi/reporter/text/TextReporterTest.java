@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,9 @@
  */
 package org.revapi.reporter.text;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+
 import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -25,25 +28,20 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-
-import org.junit.Assert;
 import org.junit.Test;
 import org.revapi.API;
 import org.revapi.AnalysisContext;
-import org.revapi.Archive;
 import org.revapi.CompatibilityType;
 import org.revapi.DifferenceSeverity;
-import org.revapi.Element;
 import org.revapi.PipelineConfiguration;
 import org.revapi.Report;
 import org.revapi.Revapi;
-import org.revapi.simple.FileArchive;
-import org.revapi.simple.SimpleElement;
+import org.revapi.base.BaseElement;
+import org.revapi.base.FileArchive;
 
 /**
  * @author Lukas Krejci
+ * 
  * @since 0.5.0
  */
 public class TextReporterTest {
@@ -56,10 +54,10 @@ public class TextReporterTest {
 
         AnalysisContext ctx = AnalysisContext.builder(r)
                 .withOldAPI(API.of(new FileArchive(new File("old-dummy.archive"))).build())
-                .withNewAPI(API.of(new FileArchive(new File("new-dummy.archive"))).build())
-                .build();
+                .withNewAPI(API.of(new FileArchive(new File("new-dummy.archive"))).build()).build();
 
         AnalysisContext reporterCtx = r.prepareAnalysis(ctx).getFirstConfigurationOrNull(TextReporter.class);
+        assertNotNull(reporterCtx);
 
         reporter.initialize(reporterCtx);
 
@@ -72,22 +70,12 @@ public class TextReporterTest {
 
         reporter.close();
 
-        String expected = "Analysis results\n" +
-                "----------------\n" +
-                "\n" +
-                "Old API: old-dummy.archive\n" +
-                "New API: new-dummy.archive\n" +
-                "old: old1\n" +
-                "new: new1\n" +
-                "code1: descr1\n" +
-                "SOURCE: BREAKING\n" +
-                "\n" +
-                "old: old2\n" +
-                "new: new2\n" +
-                "code2: descr2\n" +
-                "BINARY: BREAKING\n\n";
+        String expected = "Analysis results\n" + "----------------\n" + "\n" + "Old API: old-dummy.archive\n"
+                + "New API: new-dummy.archive\n" + "old: old1\n" + "new: new1\n" + "code1: descr1\n"
+                + "SOURCE: BREAKING\n" + "\n" + "old: old2\n" + "new: new2\n" + "code2\n" + "justified\n"
+                + "BINARY: BREAKING\n\n";
 
-        Assert.assertEquals(expected, out.toString());
+        assertEquals(expected, out.toString());
     }
 
     @Test
@@ -101,12 +89,14 @@ public class TextReporterTest {
 
             Revapi r = new Revapi(PipelineConfiguration.builder().withReporters(TextReporter.class).build());
 
-            AnalysisContext ctx = AnalysisContext.builder(r).withConfigurationFromJSON(
-                    "{\"revapi\": {\"reporter\": {\"text\": {\"template\": \"" + tempFile.toString() + "\"}}}}")
+            AnalysisContext ctx = AnalysisContext.builder(r)
+                    .withConfigurationFromJSON(
+                            "{\"revapi\": {\"reporter\": {\"text\": {\"template\": \"" + tempFile.toString() + "\"}}}}")
                     .withOldAPI(API.of(new FileArchive(new File("old-dummy.archive"))).build())
                     .withNewAPI(API.of(new FileArchive(new File("new-dummy.archive"))).build()).build();
 
             AnalysisContext reporterCtx = r.prepareAnalysis(ctx).getFirstConfigurationOrNull(TextReporter.class);
+            assertNotNull(reporterCtx);
 
             reporter.initialize(reporterCtx);
 
@@ -121,7 +111,7 @@ public class TextReporterTest {
 
             String expected = "old1 VS new1\nold2 VS new2\n";
 
-            Assert.assertEquals(expected, out.toString());
+            assertEquals(expected, out.toString());
         } finally {
             Files.delete(tempFile);
         }
@@ -131,12 +121,12 @@ public class TextReporterTest {
         List<Report> ret = new ArrayList<>();
 
         Report report = Report.builder().withOld(new DummyElement("old2")).withNew(new DummyElement("new2"))
-                .addProblem().withCode("code2").withDescription("descr2").withName("name2")
+                .addDifference().withCode("code2").withName("name2").withJustification("justified")
                 .addClassification(CompatibilityType.BINARY, DifferenceSeverity.BREAKING).done().build();
 
         ret.add(report);
 
-        report = Report.builder().withOld(new DummyElement("old1")).withNew(new DummyElement("new1")).addProblem()
+        report = Report.builder().withOld(new DummyElement("old1")).withNew(new DummyElement("new1")).addDifference()
                 .withCode("code1").withDescription("descr1").withName("name1")
                 .addClassification(CompatibilityType.SOURCE, DifferenceSeverity.BREAKING).done().build();
 
@@ -145,30 +135,18 @@ public class TextReporterTest {
         return ret;
     }
 
-    private static final class DummyElement extends SimpleElement {
+    private static final class DummyElement extends BaseElement<DummyElement> {
 
         private final String name;
 
         private DummyElement(String name) {
+            super(null, null);
             this.name = name;
         }
 
-        @SuppressWarnings("ConstantConditions")
-        @Nonnull
         @Override
-        public API getApi() {
-            return null;
-        }
-
-        @Nullable
-        @Override
-        public Archive getArchive() {
-            return null;
-        }
-
-        @Override
-        public int compareTo(Element o) {
-            return name.compareTo(((DummyElement) o).name);
+        public int compareTo(DummyElement o) {
+            return name.compareTo(o.name);
         }
 
         @Override

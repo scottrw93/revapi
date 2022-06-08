@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,52 +18,51 @@ package org.revapi.basic;
 
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.revapi.AnalysisContext;
+import org.revapi.Archive;
+import org.revapi.ArchiveAnalyzer;
 import org.revapi.Element;
-import org.revapi.ElementFilter;
-
-import org.jboss.dmr.ModelNode;
+import org.revapi.ElementMatcher;
+import org.revapi.FilterFinishResult;
+import org.revapi.FilterStartResult;
+import org.revapi.TreeFilter;
+import org.revapi.TreeFilterProvider;
+import org.revapi.base.OverridableIncludeExcludeTreeFilter;
 
 /**
- * An element filter that can filter out elements based on matching their full human readable representations.
- * Archive filter can filter out elements that belong to specified archives.
+ * An element filter that can filter out elements based on matching their full human readable representations. Archive
+ * filter can filter out elements that belong to specified archives.
  *
- * <p>The configuration looks like follows:
- * <pre><code>
- * {
- *      "revapi" : {
- *          "filter" : {
- *              "elements" : {
- *                  "include" : ["REGEX_ON_ELEMENT_FULL_REPRESENTATIONS", "ANOTHER_REGEX_ON_ELEMENT_FULL_REPRESENTATIONS"],
- *                  "exclude" : ["REGEX_ON_ELEMENT_FULL_REPRESENTATIONS", "ANOTHER_REGEX_ON_ELEMENT_FULL_REPRESENTATIONS"]
- *              },
- *              "archives" : {
- *                  "include" : ["REGEX_ON_ARCHIVE_NAMES", "ANOTHER_REGEX_ON_ARCHIVE_NAMES"],
- *                  "exclude" : ["REGEX_ON_ARCHIVE_NAMES", "ANOTHER_REGEX_ON_ARCHIVE_NAMES"]
- *              }
- *          }
- *      }
- * }
- * </code></pre>
+ * <p>
+ * If no include or exclude filters are defined, everything is included. If at least 1 include filter is defined, only
+ * elements matching it are included. Out of the included elements, some may be further excluded by the exclude filters.
  *
- * <p>If no include or exclude filters are defined, everything is included. If at least 1 include filter is defined, only
- * elements matching it are included. Out of the included elements, some may be further excluded by the exclude
- * filters.
+ * <p>
+ * See {@code META-INF/filter-schema.json} for the schema of the configuration.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
-public class ConfigurableElementFilter implements ElementFilter {
-    private final List<Pattern> elementIncludes = new ArrayList<>();
-    private final List<Pattern> elementExcludes = new ArrayList<>();
+public class ConfigurableElementFilter implements TreeFilterProvider {
+    private final List<ElementMatcher.CompiledRecipe> elementIncludeRecipes = new ArrayList<>();
+    private final List<ElementMatcher.CompiledRecipe> elementExcludeRecipes = new ArrayList<>();
     private final List<Pattern> archiveIncludes = new ArrayList<>();
     private final List<Pattern> archiveExcludes = new ArrayList<>();
 
@@ -79,83 +78,152 @@ public class ConfigurableElementFilter implements ElementFilter {
     @Override
     public Reader getJSONSchema() {
         return new InputStreamReader(getClass().getResourceAsStream("/META-INF/filter-schema.json"),
-                Charset.forName("UTF-8"));
+                StandardCharsets.UTF_8);
     }
 
     @Override
     public void initialize(@Nonnull AnalysisContext analysisContext) {
-        ModelNode root = analysisContext.getConfiguration();
-        if (!root.isDefined()) {
+        JsonNode root = analysisContext.getConfigurationNode();
+        if (root.isNull()) {
             doNothing = true;
             return;
         }
 
-        ModelNode elements = root.get("elements");
-        if (elements.isDefined()) {
-            readFilter(elements, elementIncludes, elementExcludes);
+        JsonNode elements = root.path("elements");
+        if (!elements.isMissingNode()) {
+            readComplexFilter(elements, analysisContext.getMatchers(), elementIncludeRecipes, elementExcludeRecipes);
         }
 
-        ModelNode archives = root.get("archives");
-        if (archives.isDefined()) {
-            readFilter(archives, archiveIncludes, archiveExcludes);
+        JsonNode archives = root.path("archives");
+        if (!archives.isMissingNode()) {
+            readSimpleFilter(archives, archiveIncludes, archiveExcludes);
         }
 
-        doNothing = elementIncludes.isEmpty() && elementExcludes.isEmpty() && archiveIncludes.isEmpty() &&
-                archiveExcludes.isEmpty();
+        doNothing = elementIncludeRecipes.isEmpty() && archiveIncludes.isEmpty() && elementExcludeRecipes.isEmpty()
+                && archiveExcludes.isEmpty();
     }
 
     @Override
-    public boolean applies(@Nullable Element element) {
-        if (doNothing) {
-            return true;
-        }
+    public <E extends Element<E>> Optional<TreeFilter<E>> filterFor(ArchiveAnalyzer<E> archiveAnalyzer) {
+        @Nullable
+        TreeFilter<E> excludes = elementExcludeRecipes.isEmpty() ? null : TreeFilter.union(elementExcludeRecipes
+                .stream().map(r -> r.filterFor(archiveAnalyzer)).filter(Objects::nonNull).collect(Collectors.toList()));
+        @Nullable
+        TreeFilter<E> includes = elementIncludeRecipes.isEmpty() ? null : TreeFilter.union(elementIncludeRecipes
+                .stream().map(r -> r.filterFor(archiveAnalyzer)).filter(Objects::nonNull).collect(Collectors.toList()));
 
-        String archive = element == null ? null : (element.getArchive() == null ? null :
-            element.getArchive().getName());
+        return Optional.of(new OverridableIncludeExcludeTreeFilter<E>(includes, excludes) {
+            final Set<Archive> excludedArchives = Collections.newSetFromMap(new IdentityHashMap<>());
 
-        boolean include = true;
-        if (archive != null) {
-            include = isIncluded(archive, archiveIncludes, archiveExcludes);
-        }
+            @Override
+            public FilterStartResult start(E element) {
+                if (doNothing) {
+                    return FilterStartResult.defaultResult();
+                }
 
-        if (include) {
-            String representation = element == null ? null : element.getFullHumanReadableString();
-            if (representation != null) {
-                include = isIncluded(representation, elementIncludes, elementExcludes);
+                String archive = element.getArchive() == null ? "" : element.getArchive().getName();
+
+                if (!isIncluded(archive, archiveIncludes, archiveExcludes)) {
+                    excludedArchives.add(element.getArchive());
+                    return FilterStartResult.doesntMatch();
+                }
+
+                return super.start(element);
             }
-        }
 
-        return include;
-    }
+            @Override
+            public FilterFinishResult finish(E element) {
+                if (doNothing) {
+                    return FilterFinishResult.matches();
+                }
 
-    @Override
-    public boolean shouldDescendInto(@Nullable Object element) {
-        return true;
+                if (excludedArchives.contains(element.getArchive())) {
+                    return FilterFinishResult.doesntMatch();
+                }
+
+                return super.finish(element);
+            }
+
+            @Override
+            public Map<E, FilterFinishResult> finish() {
+                if (doNothing) {
+                    return Collections.emptyMap();
+                }
+
+                excludedArchives.clear();
+
+                return super.finish();
+            }
+        });
     }
 
     @Override
     public void close() {
     }
 
-    private static void readFilter(ModelNode root, List<Pattern> include, List<Pattern> exclude) {
-        ModelNode includeNode = root.get("include");
+    private static void readSimpleFilter(JsonNode root, List<Pattern> include, List<Pattern> exclude) {
+        JsonNode includeNode = root.path("include");
 
-        if (includeNode.isDefined()) {
-            for (ModelNode inc : includeNode.asList()) {
-                include.add(Pattern.compile(inc.asString()));
+        if (includeNode.isArray()) {
+            for (JsonNode inc : includeNode) {
+                include.add(Pattern.compile(inc.asText()));
             }
         }
 
-        ModelNode excludeNode = root.get("exclude");
+        JsonNode excludeNode = root.path("exclude");
 
-        if (excludeNode.isDefined()) {
-            for (ModelNode exc : excludeNode.asList()) {
-                exclude.add(Pattern.compile(exc.asString()));
+        if (excludeNode.isArray()) {
+            for (JsonNode exc : excludeNode) {
+                exclude.add(Pattern.compile(exc.asText()));
             }
         }
     }
 
-    private static boolean isIncluded(String representation, List<Pattern> includePatterns, List<Pattern> excludePatterns) {
+    private static void readComplexFilter(JsonNode root, Map<String, ElementMatcher> availableMatchers,
+            List<ElementMatcher.CompiledRecipe> include, List<ElementMatcher.CompiledRecipe> exclude) {
+        JsonNode includeNode = root.path("include");
+
+        if (includeNode.isArray()) {
+            for (JsonNode inc : includeNode) {
+                ElementMatcher.CompiledRecipe filter = parse(inc, availableMatchers);
+                include.add(filter);
+            }
+        }
+
+        JsonNode excludeNode = root.path("exclude");
+
+        if (excludeNode.isArray()) {
+            for (JsonNode exc : excludeNode) {
+                ElementMatcher.CompiledRecipe filter = parse(exc, availableMatchers);
+                exclude.add(filter);
+            }
+        }
+    }
+
+    @Nullable
+    private static ElementMatcher.CompiledRecipe parse(JsonNode filterDefinition,
+            Map<String, ElementMatcher> availableMatchers) {
+        String recipe;
+        ElementMatcher matcher;
+        if (filterDefinition.isTextual()) {
+            recipe = filterDefinition.asText();
+            matcher = new RegexElementMatcher();
+        } else {
+            recipe = filterDefinition.path("match").asText();
+            matcher = availableMatchers.get(filterDefinition.path("matcher").asText(null));
+        }
+
+        if (matcher == null) {
+            throw new IllegalStateException(
+                    "Element matcher with id '" + filterDefinition.path("matcher").asText(null) + "' was not found.");
+        }
+
+        return matcher.compile(recipe)
+                .orElseThrow(() -> new IllegalArgumentException("Failed to compile the match recipe."));
+    }
+
+    private static boolean isIncluded(String representation, List<Pattern> includePatterns,
+            List<Pattern> excludePatterns) {
         boolean include = true;
 
         if (!includePatterns.isEmpty()) {

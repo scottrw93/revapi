@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.StreamSupport;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -43,8 +44,7 @@ import java.util.zip.ZipOutputStream;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import org.jboss.dmr.ModelNode;
-import org.jboss.dmr.ModelType;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.revapi.AnalysisContext;
 import org.revapi.Archive;
 import org.revapi.java.spi.JarExtractor;
@@ -55,10 +55,12 @@ import org.slf4j.LoggerFactory;
  * If the provided archive is a ZIP file (which also means a JAR file) and it contains entries in the WEB-INF/classes
  * directory then only those entries are considered for API analysis.
  *
- * <p>Can be configured using {@code include} and {@code exclude} lists of regexes on archive names so that user can
- * switch this extractor off if need be.
+ * <p>
+ * Can be configured using {@code include} and {@code exclude} lists of regexes on archive names so that user can switch
+ * this extractor off if need be.
  *
- * <p><b>Extension ID:</b> {@code war}
+ * <p>
+ * <b>Extension ID:</b> {@code war}
  */
 public class WarJarExtractor implements JarExtractor {
     private static final Logger LOG = LoggerFactory.getLogger(WarJarExtractor.class);
@@ -137,7 +139,7 @@ public class WarJarExtractor implements JarExtractor {
             }
         }
 
-        return  -1;
+        return -1;
     }
 
     private void cleanPath(Path path) {
@@ -159,39 +161,37 @@ public class WarJarExtractor implements JarExtractor {
     @Override
     public Reader getJSONSchema() {
         return new InputStreamReader(getClass().getResourceAsStream("/META-INF/warJarExtract-config-schema.json"),
-                Charset.forName("UTF-8"));
+                StandardCharsets.UTF_8);
     }
 
     @Override
     public void initialize(@Nonnull AnalysisContext analysisContext) {
-        ModelNode scan = analysisContext.getConfiguration().get("scan");
-        ModelNode disabled = analysisContext.getConfiguration().get("disabled");
+        JsonNode scan = analysisContext.getConfigurationNode().path("scan");
+        JsonNode disabled = analysisContext.getConfigurationNode().path("disabled");
 
-        doNothing = disabled.isDefined() && disabled.asBoolean();
+        doNothing = disabled.asBoolean(false);
 
         if (doNothing) {
             return;
         }
 
-        if (scan.isDefined() && scan.getType() == ModelType.LIST) {
-            this.scan = new HashMap<>(scan.keys().size(), 1f);
-            for(ModelNode record : scan.asList()) {
-                ModelNode archiveNode = record.get("archive");
-                ModelNode prefixesNode = record.get("prefixes");
+        if (scan.isArray()) {
+            this.scan = new HashMap<>(scan.size(), 1f);
+            for (JsonNode record : scan) {
+                JsonNode archiveNode = record.path("archive");
+                JsonNode prefixesNode = record.path("prefixes");
 
-                if (!archiveNode.isDefined() || !prefixesNode.isDefined()) {
+                if (archiveNode.isMissingNode() || prefixesNode.isMissingNode()) {
                     continue;
                 }
 
-                if (archiveNode.getType() != ModelType.STRING || prefixesNode.getType() != ModelType.LIST) {
+                if (!archiveNode.isTextual() || !prefixesNode.isArray()) {
                     continue;
                 }
 
-                Pattern archive = Pattern.compile(archiveNode.asString());
-                Set<String> prefixes = prefixesNode.asList().stream()
-                        .map(ModelNode::asString)
-                        .map(v -> v.endsWith("/") ? v : (v + "/"))
-                        .collect(toSet());
+                Pattern archive = Pattern.compile(archiveNode.asText());
+                Set<String> prefixes = StreamSupport.stream(prefixesNode.spliterator(), false).map(JsonNode::asText)
+                        .map(v -> v.endsWith("/") ? v : (v + "/")).collect(toSet());
 
                 this.scan.put(archive, prefixes);
             }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,26 +16,31 @@
  */
 package org.revapi.java.model;
 
-import java.util.SortedSet;
-
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.revapi.Archive;
+import org.revapi.Reference;
+import org.revapi.base.BaseElement;
 import org.revapi.java.compilation.ProbingEnvironment;
 import org.revapi.java.spi.JavaElement;
 import org.revapi.java.spi.TypeEnvironment;
-import org.revapi.simple.SimpleElement;
+import org.revapi.java.spi.UseSite;
 
 /**
  * A common superclass for {@link AnnotationElement} and {@link JavaElementBase} to stuff that they share.
  */
-public abstract class AbstractJavaElement extends SimpleElement implements JavaElement {
-    protected Archive archive;
+public abstract class AbstractJavaElement extends BaseElement<JavaElement> implements JavaElement {
     protected final ProbingEnvironment environment;
 
     protected AbstractJavaElement(ProbingEnvironment environment) {
+        super(environment.getApi());
         this.environment = environment;
+    }
+
+    @Override
+    protected Reference<JavaElement> newReference(JavaElement target, Reference.Type<JavaElement> type) {
+        return new UseSite((UseSite.Type) type, target);
     }
 
     @Nonnull
@@ -44,20 +49,7 @@ public abstract class AbstractJavaElement extends SimpleElement implements JavaE
         return environment;
     }
 
-    @Nullable
-    @Override
-    public Archive getArchive() {
-        return archive;
-    }
-
-    @Nonnull
-    @Override
-    @SuppressWarnings("unchecked")
-    public SortedSet<? extends JavaElement> getChildren() {
-        return (SortedSet<JavaElement>) super.getChildren();
-    }
-
     public void setArchive(@Nullable Archive archive) {
-        this.archive = archive;
+        super.setArchive(archive);
     }
 }

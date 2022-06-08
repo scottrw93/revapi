@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,40 +16,47 @@
  */
 package org.revapi;
 
-import static java.util.Collections.emptyList;
-import static java.util.Collections.emptyMap;
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toMap;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.Charset;
+import java.io.Reader;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.jboss.dmr.ModelNode;
-import org.jboss.dmr.ModelType;
 import org.revapi.configuration.Configurable;
 import org.revapi.configuration.JSONUtil;
 
 /**
  * An analysis context is an aggregation of the APIs to check and configuration for the analysis.
  *
- * <p>The analysis context can also contain arbitrary data that can be then accessed by the extensions. This can be used
- * to pass runtime data to the extensions that cannot be captured by their configurations.
+ * <p>
+ * The analysis context can also contain arbitrary data that can be then accessed by the extensions. This can be used to
+ * pass runtime data to the extensions that cannot be captured by their configurations.
  *
- * <p>The configuration accepted by the builder is actually of 2 forms.
+ * <p>
+ * The configuration accepted by the builder is actually of 2 forms.
  * <ol>
  * <li>The "old style" configuration where each extension could be configured at most once
  * <li>The "new style" configuration that enables multiple configurations for each extension and is more easily
@@ -58,7 +65,9 @@ import org.revapi.configuration.JSONUtil;
  * <p>
  * In the old format, the configuration of an extension was nested inside objects corresponding to its exploded
  * extension id. E.g. if the extension had an id of "my.extension", the configuration would look like:
- * <pre><code>
+ * 
+ * <pre>
+ * <code>
  *     {
  *         "my": {
  *             "extension": {
@@ -66,17 +75,22 @@ import org.revapi.configuration.JSONUtil;
  *             }
  *         }
  *     }
- * </code></pre>
- * The original idea for doing things this way was that such configuration is easily mergeable
- * (e.g. when configuration is split across multiple files). There can be only one configuration for each extension and
- * each extension resides in a different "section" of the configuration. The nesting provides for a seemingly logical
- * structure of the configuration.
+ * </code>
+ * </pre>
+ * 
+ * The original idea for doing things this way was that such configuration is easily mergeable (e.g. when configuration
+ * is split across multiple files). There can be only one configuration for each extension and each extension resides in
+ * a different "section" of the configuration. The nesting provides for a seemingly logical structure of the
+ * configuration.
  *
- * <p>On the other hand the new configuration format is different. It stresses the possibility of having more than 1
+ * <p>
+ * On the other hand the new configuration format is different. It stresses the possibility of having more than 1
  * configuration for an extension and is more easily translatable into XML. On the other hand it is not that well nested
  * as the old configuration style so it might not look that well logically structured. The new configuration looks like
  * this:
- * <pre><code>
+ * 
+ * <pre>
+ * <code>
  *     [
  *         {
  *             "extension": "my.extension",
@@ -92,128 +106,229 @@ import org.revapi.configuration.JSONUtil;
  *             }
  *         }
  *     ]
- * </code></pre>
+ * </code>
+ * </pre>
+ * 
  * Notice that configurations for different extensions (as well as different configurations for the same extension) are
  * contained in a top level list. The configurations of different extensions are therefore no longer nested inside each
  * other, but are "laid out" sequentially.
  *
- * <p>Each such configuration can optionally be identified by an arbitrary ID which can be used during merging of
+ * <p>
+ * Each such configuration can optionally be identified by an arbitrary ID which can be used during merging of
  * configuration from multiple sources.
  *
- * <p><b>Merging Configurations</b>
+ * <p>
+ * <b>Merging Configurations</b>
  *
- * <p>As was the case with the old style configurations, the new style configurations can also be merged into each other
+ * <p>
+ * As was the case with the old style configurations, the new style configurations can also be merged into each other
  * enabling composition of the final analysis configuration from multiple sources. Because each extension can be
  * configured multiple times in the new style configuration, the identification of the configs to merge is slightly more
  * complicated than it used to.
  *
- * <p>As long as the "master" configuration and "mergee" configuration contain ids for each configuration of each
- * extension things are simple. Configurations for the same extension with the same ID are merged together, otherwise
- * their added to the list of all extension configurations.
+ * <p>
+ * As long as the "master" configuration and "mergee" configuration contain ids for each configuration of each extension
+ * things are simple. Configurations for the same extension with the same ID are merged together, otherwise their added
+ * to the list of all extension configurations.
  *
- * <p>Things get a little bit more complex when the configurations don't have an explicit ID. This use case is supported
+ * <p>
+ * Things get a little bit more complex when the configurations don't have an explicit ID. This use case is supported
  * for seamless conversion from old style configuration (where it didn't make sense to have any kind of configuration
  * ID) to new style configurations that we support now (after all there are quite some clients already having their
  * configurations set up and it would be bad to force them to rewrite them all).
  *
- * <p>Simply put, id-less configurations are mergeable as long as the master configuration contains only a single
+ * <p>
+ * Simply put, id-less configurations are mergeable as long as the master configuration contains only a single
  * configuration for given extension and there is just 1 id-less configuration for given extension in the "mergee".
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
  */
 public final class AnalysisContext {
 
     private final Locale locale;
-    private final ModelNode configuration;
+    private final JsonNode configuration;
     private final API oldApi;
     private final API newApi;
+    private final Map<String, ElementMatcher> matchers;
     private final Map<String, Object> data;
+    private final Map<DifferenceSeverity, Criticality> defaultSeverityMapping;
+    private final Map<String, Criticality> criticalityByName;
 
     /**
      * Constructor
      *
-     * @param locale        the locale the analysis reporters should use
-     * @param configuration configuration represented as DMR node
-     * @param oldApi        the old API
-     * @param newApi        the new API
-     * @param data          the data that should be attached to the analysis context
+     * @param locale
+     *            the locale the analysis reporters should use
+     * @param configuration
+     *            configuration represented as DMR node
+     * @param oldApi
+     *            the old API
+     * @param newApi
+     *            the new API
+     * @param data
+     *            the data that should be attached to the analysis context
+     * 
+     * @deprecated use jackson-based methods
      */
-    private AnalysisContext(@Nonnull Locale locale, @Nullable ModelNode configuration, @Nonnull API oldApi,
-            @Nonnull API newApi, @Nonnull Map<String, Object> data) {
+    @Deprecated
+    private AnalysisContext(Locale locale, @Nullable ModelNode configuration, API oldApi, API newApi,
+            Collection<ElementMatcher> elementMatchers, Map<String, Object> data,
+            Collection<Criticality> knownCriticalities, Map<DifferenceSeverity, Criticality> defaultSeverityMapping) {
+        this(locale, JSONUtil.convert(configuration), oldApi, newApi, elementMatchers, data, knownCriticalities,
+                defaultSeverityMapping);
+    }
+
+    private AnalysisContext(Locale locale, @Nullable JsonNode configuration, API oldApi, API newApi,
+            Collection<ElementMatcher> elementMatchers, Map<String, Object> data,
+            Collection<Criticality> knownCriticalities, Map<DifferenceSeverity, Criticality> defaultSeverityMapping) {
         this.locale = locale;
         if (configuration == null) {
-            this.configuration = new ModelNode();
-            this.configuration.setEmptyList();
+            this.configuration = JsonNodeFactory.instance.arrayNode();
         } else {
             this.configuration = configuration;
         }
         this.oldApi = oldApi;
         this.newApi = newApi;
+        this.matchers = elementMatchers == null ? Collections.emptyMap() : Collections.unmodifiableMap(
+                elementMatchers.stream().collect(Collectors.toMap(Configurable::getExtensionId, Function.identity())));
         this.data = data;
+        this.criticalityByName = knownCriticalities.stream().collect(toMap(Criticality::getName, identity()));
+        this.defaultSeverityMapping = defaultSeverityMapping;
     }
 
     /**
-     * Returns a new analysis context builder that extracts the information about the available extensions from
-     * the provided Revapi instance.
+     * Returns a new analysis context builder that extracts the information about the available extensions from the
+     * provided Revapi instance.
      *
-     * <p>The extensions have to be known so that both old and new style of configuration can be usefully worked with.
+     * <p>
+     * The extensions have to be known so that both old and new style of configuration can be usefully worked with.
      *
-     * @param revapi the revapi instance to read the available extensions from
+     * @param revapi
+     *            the revapi instance to read the available extensions from
+     * 
      * @return a new analysis context builder
      */
-    @Nonnull
     public static Builder builder(Revapi revapi) {
-        List<String> knownExtensionIds = new ArrayList<>();
-
-        addExtensionIds(revapi.getPipelineConfiguration().getApiAnalyzerTypes(), knownExtensionIds);
-        addExtensionIds(revapi.getPipelineConfiguration().getTransformTypes(), knownExtensionIds);
-        addExtensionIds(revapi.getPipelineConfiguration().getFilterTypes(), knownExtensionIds);
-        addExtensionIds(revapi.getPipelineConfiguration().getReporterTypes(), knownExtensionIds);
-
-        return new Builder(knownExtensionIds);
+        return builder(revapi.getPipelineConfiguration());
     }
 
     /**
-     * This method can be used to instantiate a new analysis context builder without the need for prior instantiation
-     * of Revapi. Such builder is only able to process a new-style configuration though!
+     * Returns a new analysis context builder that extracts the information about the available extensions from the
+     * provided pipeline configuration.
+     *
+     * <p>
+     * The extensions have to be known so that both old and new style of configuration can be usefully worked with.
+     *
+     * @param pipelineConfiguration
+     *            the pipeline configuration to initialize from
+     * 
+     * @return a new analysis context builder
+     */
+    public static Builder builder(PipelineConfiguration pipelineConfiguration) {
+        List<String> knownExtensionIds = new ArrayList<>();
+
+        addExtensionIds(pipelineConfiguration.getApiAnalyzerTypes(), knownExtensionIds);
+        addExtensionIds(pipelineConfiguration.getTransformTypes(), knownExtensionIds);
+        addExtensionIds(pipelineConfiguration.getTreeFilterTypes(), knownExtensionIds);
+        addExtensionIds(pipelineConfiguration.getReporterTypes(), knownExtensionIds);
+        addExtensionIds(pipelineConfiguration.getMatcherTypes(), knownExtensionIds);
+
+        return new Builder(knownExtensionIds, pipelineConfiguration.getCriticalities(),
+                pipelineConfiguration.getSeverityMapping());
+    }
+
+    /**
+     * This method can be used to instantiate a new analysis context builder without the need for prior instantiation of
+     * Revapi. Such builder is only able to process a new-style configuration though!
+     *
+     * <p>
+     * This analysis context will also always uses the default criticalities and severity-to-criticality mapping.
      *
      * @return a new analysis context builder
      */
     public static Builder builder() {
-        return new Builder(null);
+        return new Builder(null, Criticality.defaultCriticalities(), Criticality.defaultSeverityMapping());
     }
 
     /**
      * This is generally only useful for extensions that delegate some of their functionality to other "internal"
      * extensions of their own that they need to configure.
      *
-     * @param configuration the configuration to be supplied with the returned analysis context.
+     * @param configuration
+     *            the configuration to be supplied with the returned analysis context.
+     * 
      * @return an analysis context that is a clone of this instance but its configuration is replaced with the provided
-     * one.
+     *         one.
+     * 
+     * @deprecated use the Jackson-based variant
      */
+    @Deprecated
     public AnalysisContext copyWithConfiguration(ModelNode configuration) {
-        return new AnalysisContext(this.locale, configuration, this.oldApi, this.newApi, this.data);
+        return new AnalysisContext(this.locale, configuration, this.oldApi, this.newApi, this.matchers.values(),
+                this.data, this.criticalityByName.values(), this.defaultSeverityMapping);
     }
 
-    @Nonnull
+    /**
+     * This is generally only useful for extensions that delegate some of their functionality to other "internal"
+     * extensions of their own that they need to configure.
+     *
+     * @param configuration
+     *            the configuration to be supplied with the returned analysis context.
+     * 
+     * @return an analysis context that is a clone of this instance but its configuration is replaced with the provided
+     *         one.
+     */
+    public AnalysisContext copyWithConfiguration(JsonNode configuration) {
+        return new AnalysisContext(this.locale, configuration, this.oldApi, this.newApi, this.matchers.values(),
+                this.data, this.criticalityByName.values(), this.defaultSeverityMapping);
+    }
+
+    /**
+     * A helper method to instantiate a new analysis context with the provided set of matchers. This is only meant to be
+     * used during analysis initialization.
+     *
+     * @param matchers
+     *            the list of matchers to provide through this context
+     * 
+     * @return a copy of this instance with the provided matchers replacing any existing in this instance
+     */
+    public AnalysisContext copyWithMatchers(Set<ElementMatcher> matchers) {
+        return new AnalysisContext(this.locale, this.configuration, this.oldApi, this.newApi, matchers, this.data,
+                this.criticalityByName.values(), this.defaultSeverityMapping);
+    }
+
     public Locale getLocale() {
         return locale;
     }
 
-    @Nonnull
+    /**
+     * @deprecated use {@link #getConfigurationNode()} instead
+     */
+    @Deprecated
     public ModelNode getConfiguration() {
+        return JSONUtil.convert(configuration);
+    }
+
+    /**
+     * Returns the configuration node. This is never null. If the configuration is not present a
+     * {@link com.fasterxml.jackson.databind.node.NullNode} is returned.
+     */
+    public JsonNode getConfigurationNode() {
         return configuration;
     }
 
-    @Nonnull
     public API getOldApi() {
         return oldApi;
     }
 
-    @Nonnull
     public API getNewApi() {
         return newApi;
+    }
+
+    public Map<String, ElementMatcher> getMatchers() {
+        return matchers;
     }
 
     @Nullable
@@ -221,34 +336,46 @@ public final class AnalysisContext {
         return data.get(key);
     }
 
-    private static <T extends Configurable>
-    void addExtensionIds(Collection<Class<? extends T>> cs, List<String> extensionIds) {
-        cs.stream()
-                .map(AnalysisContext::instantiate)
-                .map(Configurable::getExtensionId)
-                .filter(Objects::nonNull)
+    @Nullable
+    public Criticality getCriticalityByName(String name) {
+        return criticalityByName.get(name);
+    }
+
+    public Criticality getDefaultCriticality(DifferenceSeverity severity) {
+        return defaultSeverityMapping.get(severity);
+    }
+
+    private static <T extends Configurable> void addExtensionIds(Collection<Class<? extends T>> cs,
+            List<String> extensionIds) {
+        cs.stream().map(AnalysisContext::instantiate).map(Configurable::getExtensionId).filter(Objects::nonNull)
                 .forEach(extensionIds::add);
     }
 
     private static <T> T instantiate(Class<T> cls) {
         try {
-            return cls.newInstance();
-        } catch (InstantiationException | IllegalAccessException e) {
+            return cls.getDeclaredConstructor().newInstance();
+        } catch (InstantiationException | IllegalAccessException | NoSuchMethodException
+                | InvocationTargetException e) {
             throw new IllegalStateException("Class " + cls + " does not have a public no-arg constructor.", e);
         }
     }
 
     public static final class Builder {
         private final List<String> knownExtensionIds;
+        private final Set<Criticality> knownCriticalities;
 
         private Locale locale = Locale.getDefault();
         private API oldApi;
         private API newApi;
-        private ModelNode configuration;
+        private ArrayNode configuration;
         private Map<String, Object> data = new HashMap<>(2);
+        private final Map<DifferenceSeverity, Criticality> defaultSeverityMapping;
 
-        private Builder(List<String> knownExtensionIds) {
+        private Builder(List<String> knownExtensionIds, Set<Criticality> knownCriticalities,
+                Map<DifferenceSeverity, Criticality> defaultSeverityMapping) {
             this.knownExtensionIds = knownExtensionIds;
+            this.knownCriticalities = knownCriticalities;
+            this.defaultSeverityMapping = defaultSeverityMapping;
         }
 
         public Builder withLocale(Locale locale) {
@@ -266,34 +393,66 @@ public final class AnalysisContext {
             return this;
         }
 
+        /**
+         * @deprecated use {@link #withConfiguration(JsonNode)}
+         */
+        @Deprecated
         public Builder withConfiguration(ModelNode data) {
+            this.configuration = convertToNewStyle(JSONUtil.convert(data));
+            return this;
+        }
+
+        public Builder withConfiguration(JsonNode data) {
             this.configuration = convertToNewStyle(data);
             return this;
         }
 
         public Builder withConfigurationFromJSON(String json) {
-            this.configuration = convertToNewStyle(ModelNode.fromJSONString(JSONUtil.stripComments(json)));
+            this.configuration = convertToNewStyle(JSONUtil.parse(JSONUtil.stripComments(json)));
             return this;
         }
 
         public Builder withConfigurationFromJSONStream(InputStream jsonStream) throws IOException {
-            this.configuration = convertToNewStyle(ModelNode
-                    .fromJSONStream(JSONUtil.stripComments(jsonStream, Charset.forName("UTF-8"))));
+            this.configuration = convertToNewStyle(JSONUtil.parse(JSONUtil.stripComments(jsonStream)));
             return this;
         }
 
         /**
          * Tries to merge the provided configuration into the already existing one.
          *
-         * <p>See the {@link AnalysisContext} documentation for detailed explanation of the merging logic.
+         * <p>
+         * See the {@link AnalysisContext} documentation for detailed explanation of the merging logic.
          *
-         * @param config the configuration to merge
+         * @param config
+         *            the configuration to merge
+         * 
          * @return this builder
+         * 
+         * @deprecated use the Jackson-based variant
          */
+        @Deprecated
         public Builder mergeConfiguration(ModelNode config) {
             if (configuration == null) {
-                configuration = new ModelNode();
-                configuration.setEmptyList();
+                configuration = JsonNodeFactory.instance.arrayNode();
+            }
+            mergeConfigs(this.configuration, convertToNewStyle(JSONUtil.convert(config)));
+            return this;
+        }
+
+        /**
+         * Tries to merge the provided configuration into the already existing one.
+         *
+         * <p>
+         * See the {@link AnalysisContext} documentation for detailed explanation of the merging logic.
+         *
+         * @param config
+         *            the configuration to merge
+         * 
+         * @return this builder
+         */
+        public Builder mergeConfiguration(JsonNode config) {
+            if (configuration == null) {
+                configuration = JsonNodeFactory.instance.arrayNode();
             }
             mergeConfigs(this.configuration, convertToNewStyle(config));
             return this;
@@ -301,20 +460,18 @@ public final class AnalysisContext {
 
         public Builder mergeConfigurationFromJSON(String json) {
             if (configuration == null) {
-                configuration = new ModelNode();
-                configuration.setEmptyList();
+                configuration = JsonNodeFactory.instance.arrayNode();
             }
-            mergeConfigs(configuration, convertToNewStyle(ModelNode.fromJSONString(JSONUtil.stripComments(json))));
+            mergeConfigs(configuration, convertToNewStyle(JSONUtil.parse(JSONUtil.stripComments(json))));
             return this;
         }
 
         public Builder mergeConfigurationFromJSONStream(InputStream jsonStream) throws IOException {
             if (configuration == null) {
-                configuration = new ModelNode();
-                configuration.setEmptyList();
+                configuration = JsonNodeFactory.instance.arrayNode();
             }
-            InputStream str = JSONUtil.stripComments(jsonStream, Charset.forName("UTF-8"));
-            mergeConfigs(configuration, ModelNode.fromJSONStream(str));
+            Reader rdr = JSONUtil.stripComments(jsonStream);
+            mergeConfigs(configuration, convertToNewStyle(JSONUtil.parse(JSONUtil.stripComments(rdr))));
             return this;
         }
 
@@ -329,56 +486,56 @@ public final class AnalysisContext {
         }
 
         public AnalysisContext build() {
-            return new AnalysisContext(locale, configuration, oldApi, newApi, data);
+            return new AnalysisContext(locale, configuration, oldApi, newApi, Collections.emptySet(), data,
+                    knownCriticalities, defaultSeverityMapping);
         }
 
-        private ModelNode convertToNewStyle(ModelNode configuration) {
-            if (configuration.getType() == ModelType.LIST) {
+        private ArrayNode convertToNewStyle(JsonNode configuration) {
+            if (configuration.isArray()) {
                 Map<String, Set<String>> idsByExtension = new HashMap<>(4);
-                for (ModelNode c : configuration.asList()) {
+                for (JsonNode c : configuration) {
 
-                    if (c.hasDefined("id")) {
-                        String extension = c.get("extension").asString();
-                        String id = c.get("id").asString();
+                    if (c.hasNonNull("id")) {
+                        String extension = c.get("extension").asText();
+                        String id = c.get("id").asText();
 
                         boolean added = idsByExtension.computeIfAbsent(extension, x -> new HashSet<>(2)).add(id);
                         if (!added) {
                             throw new IllegalArgumentException(
-                                    "A configuration cannot contain 2 extension configurations with the same id. " +
-                                            "At least 2 extension configurations of extension '" + extension +
-                                            "' have the id '" + id + "'.");
+                                    "A configuration cannot contain 2 extension configurations with the same id. "
+                                            + "At least 2 extension configurations of extension '" + extension
+                                            + "' have the id '" + id + "'.");
                         }
                     }
                 }
 
-                return configuration;
+                return (ArrayNode) configuration;
             }
 
             if (knownExtensionIds == null) {
                 throw new IllegalArgumentException(
-                        "The analysis context builder wasn't supplied with the list of known extension ids," +
-                                " so it only can process new-style configurations.");
+                        "The analysis context builder wasn't supplied with the list of known extension ids,"
+                                + " so it only can process new-style configurations.");
             }
 
-            ModelNode newStyleConfig = new ModelNode();
-            newStyleConfig.setEmptyList();
+            ArrayNode newStyleConfig = JsonNodeFactory.instance.arrayNode();
 
-            extensionScan:
-            for (String extensionId : knownExtensionIds) {
+            extensionScan: for (String extensionId : knownExtensionIds) {
                 String[] explodedId = extensionId.split("\\.");
 
-                ModelNode extConfig = configuration;
+                JsonNode extConfig = configuration;
                 for (String segment : explodedId) {
-                    if (!extConfig.hasDefined(segment)) {
+                    if (!extConfig.has(segment)) {
                         continue extensionScan;
                     } else {
                         extConfig = extConfig.get(segment);
                     }
                 }
 
-                ModelNode extNewStyle = new ModelNode();
-                extNewStyle.get("extension").set(extensionId);
-                extNewStyle.get("configuration").set(extConfig);
+                ObjectNode extNewStyle = JsonNodeFactory.instance.objectNode();
+
+                extNewStyle.put("extension", extensionId);
+                extNewStyle.set("configuration", extConfig);
 
                 newStyleConfig.add(extNewStyle);
             }
@@ -386,21 +543,22 @@ public final class AnalysisContext {
             return newStyleConfig;
         }
 
-        private static void splitByExtensionAndId(List<ModelNode> configs,
-                Map<String, Map<String, ModelNode>> byExtensionAndId,
-                Map<String, List<ModelNode>> idlessByExtension) {
-            for (ModelNode c : configs) {
-                String extensionId = c.get("extension").asString();
-                if (!c.hasDefined("id")) {
+        private static void splitByExtensionAndId(ArrayNode configs,
+                Map<String, Map<String, ObjectNode>> byExtensionAndId,
+                Map<String, List<ObjectNode>> idlessByExtension) {
+            for (JsonNode n : configs) {
+                ObjectNode c = (ObjectNode) n;
+                String extensionId = c.get("extension").asText();
+                if (!c.hasNonNull("id")) {
                     idlessByExtension.computeIfAbsent(extensionId, x -> new ArrayList<>(2)).add(c);
                     continue;
                 }
 
-                String id = c.get("id").asString();
+                String id = c.get("id").asText();
 
-                byExtensionAndId.computeIfAbsent(extensionId, x -> new HashMap<>(2)).compute(id, (i, n) -> {
-                    if (n == null) {
-                        return c;
+                byExtensionAndId.computeIfAbsent(extensionId, x -> new HashMap<>(2)).compute(id, (i, x) -> {
+                    if (x == null) {
+                        return (ObjectNode) c;
                     } else {
                         throw new IllegalArgumentException(
                                 "There cannot be 2 or more configurations with the same ID.");
@@ -409,83 +567,39 @@ public final class AnalysisContext {
             }
         }
 
-        private static void mergeConfigs(ModelNode a, ModelNode b) {
-            Map<String, Map<String, ModelNode>> aByExtensionAndId = new HashMap<>(4);
-            Map<String, List<ModelNode>> idlessAByExtensionId = new HashMap<>(4);
-            splitByExtensionAndId(a.asList(), aByExtensionAndId, idlessAByExtensionId);
+        private static void mergeConfigs(ArrayNode a, ArrayNode b) {
+            Map<String, Map<String, ObjectNode>> aByExtensionAndId = new HashMap<>(4);
+            Map<String, List<ObjectNode>> idlessAByExtensionId = new HashMap<>(4);
+            splitByExtensionAndId(a, aByExtensionAndId, idlessAByExtensionId);
 
-            Map<String, Map<String, ModelNode>> bByExtensionAndId = new HashMap<>(4);
-            Map<String, List<ModelNode>> idlessBByExtensionId = new HashMap<>(4);
-            splitByExtensionAndId(b.asList(), bByExtensionAndId, idlessBByExtensionId);
-
-            //we cannot merge if:
-            //1) "a" contains 2 or more (idless or not) for an extension and b contains at least 1 idless for an extension
-            //2) "a" contains at least 1 for an extension and b contains 2 or more idless for an extension
-            Stream.concat(aByExtensionAndId.keySet().stream(), idlessAByExtensionId.keySet().stream()).forEach(ext -> {
-                int aCnt = idlessAByExtensionId.getOrDefault(ext, emptyList()).size()
-                        + aByExtensionAndId.getOrDefault(ext, emptyMap()).size();
-
-                int bCnt = idlessBByExtensionId.getOrDefault(ext, emptyList()).size();
-
-                //rule 1
-                if (aCnt > 1 && bCnt > 0) {
-                    throw new IllegalArgumentException(
-                            "The configuration already contains more than 1 configuration for extension " +
-                                    ext + ". Cannot determine which one of them to merge" +
-                                    " the new configuration(s) (which don't have an explicit ID) into.");
-                }
-
-                //rule 2
-                if (aCnt > 0 && bCnt > 1) {
-                    throw new IllegalArgumentException(
-                            "The configuration already contains 1 or more configurations for extension " +
-                                    ext + ". At the same time, the configuration to merge already contains 2 or more" +
-                                    " configurations for the same extension without an explicit ID." +
-                                    " Cannot figure out how to merge these together.");
-                }
-            });
+            Map<String, Map<String, ObjectNode>> bByExtensionAndId = new HashMap<>(4);
+            Map<String, List<ObjectNode>> idlessBByExtensionId = new HashMap<>(4);
+            splitByExtensionAndId(b, bByExtensionAndId, idlessBByExtensionId);
 
             int bcIdx = 0;
-            for (ModelNode bc : b.asList()) {
-                String bcId = bc.hasDefined("id") ? bc.get("id").asString() : null;
-                String bcExtension = bc.get("extension").asString();
+            for (JsonNode bc : b) {
+                String bcId = bc.hasNonNull("id") ? bc.get("id").asText() : null;
+                String bcExtension = bc.get("extension").asText();
 
                 if (bcId == null) {
-                    List<ModelNode> idless = idlessAByExtensionId.get(bcExtension);
-                    if (idless != null) {
-                        if (idless.size() == 1) {
-                            List<String> path = new ArrayList<>(4);
-                            path.addAll(Arrays.asList("[" + bcIdx + "]", "configuration"));
-                            mergeNodes(bcExtension, null, path, idless.get(0).get("configuration"), bc.get("configuration"));
-                        }
-                    } else {
-                        Map<String, ModelNode> aExtensions = aByExtensionAndId.get(bcExtension);
-                        if (aExtensions == null) {
-                            a.add(bc);
-                            continue;
-                        }
-
-                        List<String> path = new ArrayList<>(4);
-                        path.addAll(Arrays.asList("[" + bcIdx + "]", "configuration"));
-
-                        ModelNode aConfig = aExtensions.values().iterator().next();
-                        mergeNodes(bcExtension, null, path, aConfig.get("configuration"), bc.get("configuration"));
-                    }
+                    a.add(bc);
+                    continue;
                 } else {
-                    Map<String, ModelNode> aExtensions = aByExtensionAndId.get(bcExtension);
+                    Map<String, ObjectNode> aExtensions = aByExtensionAndId.get(bcExtension);
                     if (aExtensions == null) {
                         a.add(bc);
                         continue;
                     }
 
-                    ModelNode aConfig = aExtensions.get(bcId);
+                    ObjectNode aConfig = aExtensions.get(bcId);
 
                     if (aConfig == null) {
                         a.add(bc);
                     } else {
                         List<String> path = new ArrayList<>(4);
                         path.addAll(Arrays.asList("[" + bcIdx + "]", "configuration"));
-                        mergeNodes(bcExtension, bcId, path, aConfig.get("configuration"), bc.get("configuration"));
+                        mergeNodes(bcExtension, bcId, path, aConfig, "configuration", aConfig.get("configuration"),
+                                bc.get("configuration"));
                     }
                 }
 
@@ -493,30 +607,50 @@ public final class AnalysisContext {
             }
         }
 
-        private static void mergeNodes(String extension, String id, List<String> path, ModelNode a, ModelNode b) {
-            switch (b.getType()) {
-                case LIST:
-                    for (ModelNode v : b.asList()) {
-                        a.add(v.clone());
-                    }
-                    break;
-                case OBJECT:
-                    for (String k : b.keys()) {
-                        ModelNode ak = a.get(k);
-                        path.add(k);
-                        mergeNodes(extension, id, path, ak, b.get(k));
-                        path.remove(path.size() - 1);
-                    }
-                    break;
-                default:
-                    if (a.isDefined()) {
-                        String p = path.stream().collect(Collectors.joining("/"));
-                        throw new IllegalArgumentException(
-                                "A conflict detected while merging configurations of extension '" + extension +
-                                        "' with id '" + id + "'. A value on path '" + p + "' would overwrite an already existing one.");
-                    } else {
-                        a.set(b);
-                    }
+        private static void mergeNodes(String extension, String id, List<String> path, ObjectNode aParent,
+                String parentKey, @Nullable JsonNode a, @Nullable JsonNode b) {
+            if (b == null) {
+                aParent.remove(parentKey);
+                return;
+            }
+
+            if (a != null && b.getNodeType() != a.getNodeType()) {
+                throw new IllegalArgumentException("Failed to merge configuration of extension " + extension
+                        + ". Some of its configuration elements have different node types than others.");
+            }
+
+            switch (b.getNodeType()) {
+            case ARRAY:
+                if (a == null) {
+                    a = JsonNodeFactory.instance.arrayNode();
+                    aParent.set(parentKey, a);
+                }
+                for (JsonNode v : b) {
+                    ((ArrayNode) a).add(v);
+                }
+                break;
+            case OBJECT:
+                if (a == null) {
+                    a = JsonNodeFactory.instance.objectNode();
+                    aParent.set(parentKey, a);
+                }
+                Iterator<Map.Entry<String, JsonNode>> it = b.fields();
+                while (it.hasNext()) {
+                    Map.Entry<String, JsonNode> e = it.next();
+                    JsonNode ak = a.get(e.getKey());
+                    path.add(e.getKey());
+                    mergeNodes(extension, id, path, (ObjectNode) a, e.getKey(), ak, e.getValue());
+                }
+                break;
+            default:
+                if (a != null) {
+                    String p = String.join("/", path);
+                    throw new IllegalArgumentException("A conflict detected while merging configurations of extension '"
+                            + extension + "' with id '" + id + "'. A value on path '" + p
+                            + "' would overwrite an already existing one.");
+                } else {
+                    aParent.set(parentKey, b);
+                }
             }
         }
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 Lukas Krejci
+ * Copyright 2014-2021 Lukas Krejci
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,25 +31,33 @@ import org.revapi.Element;
  * filter.
  *
  * @author Lukas Krejci
+ * 
  * @since 0.1
+ * 
+ * @deprecated This always had very limited utility and {@link Element#stream(Class, boolean)} seems to be a more usable
+ *             alternative.
  */
+@Deprecated
 public class DFSFilteringIterator<E extends Element> implements Iterator<E> {
     private final Class<? extends E> resultClass;
     private final Deque<Iterator<? extends Element>> dfsStack = new LinkedList<>();
     private final Filter<? super E> filter;
     private E current;
+    private Iterator<?> removePointer;
 
     /**
      * Constructor.
      *
-     * @param rootIterator the iterator over the root elements of the forest
-     * @param resultClass  the class of the elements to look for in the forest. All the returned elements will be
-     *                     assignable to this class.
-     * @param filter       optional filter that further filters out unwanted elements.
+     * @param rootIterator
+     *            the iterator over the root elements of the forest
+     * @param resultClass
+     *            the class of the elements to look for in the forest. All the returned elements will be assignable to
+     *            this class.
+     * @param filter
+     *            optional filter that further filters out unwanted elements.
      */
     public DFSFilteringIterator(@Nonnull Iterator<? extends Element> rootIterator,
-        @Nonnull Class<? extends E> resultClass,
-        @Nullable Filter<? super E> filter) {
+            @Nonnull Class<? extends E> resultClass, @Nullable Filter<? super E> filter) {
         dfsStack.push(rootIterator);
         this.resultClass = resultClass;
         this.filter = filter;
@@ -60,6 +68,7 @@ public class DFSFilteringIterator<E extends Element> implements Iterator<E> {
         if (current != null) {
             return true;
         } else {
+            removePointer = null;
             while (true) {
                 while (!dfsStack.isEmpty() && !dfsStack.peek().hasNext()) {
                     dfsStack.pop();
@@ -87,6 +96,7 @@ public class DFSFilteringIterator<E extends Element> implements Iterator<E> {
 
                         if (filter == null || filter.applies(cur)) {
                             current = cur;
+                            removePointer = currentIterator;
                             found = true;
                         }
                     }
@@ -127,12 +137,15 @@ public class DFSFilteringIterator<E extends Element> implements Iterator<E> {
         return ret;
     }
 
-    /**
-     * @throws UnsupportedOperationException This is not supported.
-     */
     @Override
     public void remove() {
-        //is this worth implementing?
-        throw new UnsupportedOperationException();
+        // the contract is such that remove() can be only called after next()
+        // hasNext() sets the current and removePointer fields
+        // next() calls hasNext() and clears current, but leaves the removePointer
+        if (current != null || removePointer == null) {
+            throw new IllegalStateException();
+        }
+
+        removePointer.remove();
     }
 }

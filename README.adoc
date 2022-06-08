@@ -1,13 +1,10 @@
 = Revapi
 :toc:
 
-image:https://travis-ci.org/revapi/revapi.svg?branch=master[Build Status,link=https://travis-ci.org/revapi/revapi]
-image:http://codecov.io/github/revapi/revapi/coverage.svg?branch=master[Code Coverage,link=https://codecov.io/github/revapi/revapi?branch=master]
-image:https://img.shields.io/gitter/room/nwjs/nw.js.svg[Gitter Chat,link=https://gitter.im/revapi/Lobby?utm_source=share-link&utm_medium=link&utm_campaign=share-link]
+image:https://github.com/revapi/revapi/actions/workflows/build.yml/badge.svg[Build Status, link=https://github.com/revapi/revapi/actions/workflows/build.yml]
+image:https://codecov.io/github/revapi/revapi/coverage.svg?branch=main[Code Coverage,link=https://codecov.io/github/revapi/revapi?branch=main]
 
-http://revapi.org[Revapi] is a tool for API analysis and change tracking.
-
-INFO: Revapi requires Java8 update 40 (1.8.0_40) or later to run. Older versions may produce wrong results.
+https://revapi.org[Revapi] is a tool for API analysis and change tracking.
 
 == Summary
 
@@ -17,7 +14,7 @@ the only extension in existence today is the Java API checker.
 
 The main distinguishing features of the Java API checker include:
 
-* large number of http://revapi.org/modules/revapi-java/differences.html[API checks]
+* large number of https://revapi.org/revapi-java/differences.html[API checks]
 ** categorized by their influence on source, binary and "semantical" compatibility
 * support for computing the API "surface" by tracking usages of types across the checked library
 and also its dependencies (ability to report type "leakage" from deps)
@@ -29,11 +26,10 @@ and also its dependencies (ability to report type "leakage" from deps)
 Other features:
 
 * ability to judge the severity of changes based on semver rules (see 
-http://revapi.org/modules/revapi-basic-features/extensions/semver-ignore.html[here])
+https://revapi.org/revapi-basic-features/semver-ignore.html[here])
 * automatic updates of pom.xml or release.properties versions according to semver rules (see 
-http://revapi.org/modules/revapi-maven-plugin/examples/updating-versions.html[here])
-* pluggable reporting (standard output, maven site generation, 
-https://github.com/revapi/revapi/issues/11[JUnit report] generator (TBD))
+https://revapi.org/revapi-maven-plugin/specifying-versions.html[here])
+* pluggable reporting (standard output, maven site generation, https://revapi.org/revapi-reporter-text/index.html[FreeMarker templates], https://revapi.org/revapi-reporter-json/index.html[JSON], ...)
 
 == Building
 
@@ -48,7 +44,7 @@ as a maven plugin or it can also be embedded in your application and used as a l
 
 === Standalone
 
-http://revapi.org/downloads.html[Download] the standalone distribution zip and
+https://revapi.org/revapi-site/downloads.html[Download] the standalone distribution zip and
 
  unzip revapi-XXX-standalone.zip
  cd revapi-XXX-standalone
@@ -71,7 +67,7 @@ Read the usage info and go.
                     <groupId>org.revapi</groupId>
                     <artifactId>revapi-java</artifactId>
                     <version>...</version>
-                </dependency>    
+                </dependency>
                 <dependency>
                     <groupId>com.acme</groupId>
                     <artifactId>my-extension</artifactId>
@@ -92,11 +88,14 @@ Read the usage info and go.
             </executions>
         </plugin>
         ...
-    </plugins>    
+    </plugins>
     ...
-</build>    
+</build>
 ----
 
+=== Gradle
+
+There is an external Gradle plugin available for Revapi, https://github.com/palantir/gradle-revapi.
 
 === Embedding
 
@@ -114,13 +113,13 @@ revapi.analyze(analysisContext);
 
 == Extending Revapi
 
-See the http://revapi.org/architecture.html[site] for more info.
+See the https://revapi.org/revapi/architecture.html[site] for more info.
 
 == Getting in touch
 
 Twitter:: https://twitter.com/revapi_org[@revapi_org]
 IRC:: #revapi @ freenode
+Matrix:: #revapiorg:matrix.org
 Mailing list:: https://groups.google.com/forum/#!forum/revapi, revapi@googlegroups.com
 Issues:: https://github.com/revapi/revapi/issues
 Code:: https://github.com/revapi/
-
