@@ -1071,7 +1071,8 @@ public final class Util {
             LOG.debug("Failed to find all super types of type '" + toHumanReadableString(type) + ". Possibly "
                     + "missing classes?", e);
         } catch (StackOverflowError e) {
-            throw new Error("Hit stack overflow for " +  toHumanReadableString(type), e);
+            LOG.error("Hit stack overflow for {}", toHumanReadableString(type));
+            throw e;
         }
     }
 
