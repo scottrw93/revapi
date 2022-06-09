@@ -67,7 +67,7 @@ import org.slf4j.LoggerFactory;
  * to reinvent the wheel.
  *
  * @author Lukas Krejci
- * 
+ *
  * @since 0.1
  */
 public final class Util {
@@ -952,7 +952,7 @@ public final class Util {
      *
      * @param construct
      *            the element or type mirror to render
-     * 
+     *
      * @return a human readable representation of the construct
      */
     @Nonnull
@@ -972,7 +972,7 @@ public final class Util {
      *
      * @param t
      *            type to convert to string
-     * 
+     *
      * @return the string representation of the type that is fit for equality comparisons
      */
     @Nonnull
@@ -1070,6 +1070,13 @@ public final class Util {
         } catch (RuntimeException e) {
             LOG.debug("Failed to find all super types of type '" + toHumanReadableString(type) + ". Possibly "
                     + "missing classes?", e);
+        } catch (StackOverflowError e) {
+            // Unfortunately, an SO here means toHumanReadableString will also be broken
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Got StackOverflowError filling super types", e);
+            } else {
+                LOG.warn("Got StackOverflowError filling super types");
+            }
         }
     }
 
