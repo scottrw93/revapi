@@ -278,6 +278,7 @@ public final class Main {
                     configFiles, additionalConfigOptions, remoteRepositories);
         } catch (Exception e) {
             e.printStackTrace();
+            System.exit(1);
         }
 
         System.exit(0);
