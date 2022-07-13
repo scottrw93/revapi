@@ -654,7 +654,7 @@ public final class Util {
             int depth = state.depth;
 
             CharSequence name;
-            if (t.getEnclosingType().getKind() != TypeKind.NONE) {
+            if (IgnoreCompletionFailures.in(() -> t.getEnclosingType().getKind()) != TypeKind.NONE) {
                 state.depth--; // we need to visit the parent with the same depth as this type
                 visit(t.getEnclosingType(), state);
                 state.depth = depth;
